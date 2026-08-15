@@ -1,6 +1,40 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import * as recipesApi from '../api/recipes.js';
+import { buildTaxonomyPatch, updateRecipeTaxonomy, updateRecipeTaxonomyBatch } from '../lib/recipe-taxonomy.js';
+
+const taxonomyModeSchema = z
+  .enum(['merge', 'replace'])
+  .describe(
+    'merge (default) adds the given categories/tags to whatever the recipe already has. ' +
+      'replace overwrites the corresponding collection with exactly the given list — ' +
+      'an empty array in replace mode clears that collection entirely.',
+  );
+
+const createMissingSchema = z
+  .boolean()
+  .describe(
+    'When true, any named category/tag that does not already exist in Mealie is created automatically. ' +
+      'When false (default), unknown names cause the call to fail with an error listing the unresolved values.',
+  );
+
+const categoriesParamSchema = z
+  .array(z.string())
+  .describe(
+    'Categories to assign, each given as a name, slug, or ID (matched case-insensitively by name/slug). ' +
+      'Categories are broad groupings (e.g. "Dinner", "Dessert") as opposed to Tags, which are more specific ' +
+      'attributes (e.g. "Quick", "Dairy-Free"). Omit this field to leave the recipe\'s categories unchanged. ' +
+      'Passing an empty array with mode "replace" clears all categories from the recipe — use with care.',
+  );
+
+const tagsParamSchema = z
+  .array(z.string())
+  .describe(
+    'Tags to assign, each given as a name, slug, or ID (matched case-insensitively by name/slug). ' +
+      'Tags are specific, free-form attributes (e.g. "Quick", "Dairy-Free") as opposed to Categories, which are ' +
+      'broad groupings (e.g. "Dinner", "Dessert"). Omit this field to leave the recipe\'s tags unchanged. ' +
+      'Passing an empty array with mode "replace" clears all tags from the recipe — use with care.',
+  );
 
 const conciseFields = [
   'name',
@@ -146,8 +180,12 @@ export function registerRecipeTools(server: McpServer) {
       description: z.string().optional(),
       recipeYield: z.string().optional(),
       totalTime: z.string().optional(),
+      categories: categoriesParamSchema.optional(),
+      tags: tagsParamSchema.optional(),
+      taxonomyMode: taxonomyModeSchema.optional(),
+      createMissing: createMissingSchema.optional(),
     },
-    async ({ slug, ...rest }) => {
+    async ({ slug, categories, tags, taxonomyMode, createMissing, ...rest }) => {
       try {
         const data: Record<string, unknown> = {};
         for (const [key, value] of Object.entries(rest)) {
@@ -155,7 +193,69 @@ export function registerRecipeTools(server: McpServer) {
             data[key] = value;
           }
         }
+
+        let taxonomyChanges: { categories?: unknown; tags?: unknown } | undefined;
+        if (categories !== undefined || tags !== undefined) {
+          const recipe = await recipesApi.getRecipe(slug);
+          const outcome = await buildTaxonomyPatch(recipe, {
+            categories,
+            tags,
+            mode: taxonomyMode,
+            createMissing,
+          });
+          Object.assign(data, outcome.patchFields);
+          taxonomyChanges = { categories: outcome.categories, tags: outcome.tags };
+        }
+
         const result = await recipesApi.patchRecipe(slug, data);
+        return successResponse(taxonomyChanges ? { ...result, taxonomyChanges } : result);
+      } catch (error) {
+        return errorResponse(error);
+      }
+    },
+  );
+
+  server.tool(
+    'update_recipe_taxonomy',
+    {
+      slug: z.string().describe('Slug of the recipe to update.'),
+      categories: categoriesParamSchema.optional(),
+      tags: tagsParamSchema.optional(),
+      mode: taxonomyModeSchema.optional(),
+      createMissing: createMissingSchema.optional(),
+    },
+    async ({ slug, categories, tags, mode, createMissing }) => {
+      try {
+        const result = await updateRecipeTaxonomy(slug, { categories, tags, mode, createMissing });
+        return successResponse(result);
+      } catch (error) {
+        return errorResponse(error);
+      }
+    },
+  );
+
+  server.tool(
+    'update_recipe_taxonomy_batch',
+    {
+      updates: z
+        .array(
+          z.object({
+            slug: z.string().describe('Slug of the recipe to update.'),
+            categories: categoriesParamSchema.optional(),
+            tags: tagsParamSchema.optional(),
+            mode: taxonomyModeSchema.optional(),
+            createMissing: createMissingSchema.optional(),
+          }),
+        )
+        .describe(
+          'One entry per recipe to update. Each recipe is processed independently with bounded concurrency — ' +
+            'a failure on one recipe does not abort the others, and the response includes a success/error result ' +
+            'for every entry.',
+        ),
+    },
+    async ({ updates }) => {
+      try {
+        const result = await updateRecipeTaxonomyBatch(updates);
         return successResponse(result);
       } catch (error) {
         return errorResponse(error);
