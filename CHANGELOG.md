@@ -1,3 +1,10 @@
+## [1.4.1](https://github.com/timo-reymann/mealie-mcp-server/compare/v1.4.0...v1.4.1) (2026-08-16)
+
+
+### Bug Fixes
+
+* create_recipe ignoring ingredients and instructions ([#4](https://github.com/timo-reymann/mealie-mcp-server/issues/4)) ([ca2d5ff](https://github.com/timo-reymann/mealie-mcp-server/commit/ca2d5ffb6ab36fd46bf84759854bf08beed19d19))
+
 # [1.4.0](https://github.com/timo-reymann/mealie-mcp-server/compare/v1.3.0...v1.4.0) (2026-07-15)
 
 
