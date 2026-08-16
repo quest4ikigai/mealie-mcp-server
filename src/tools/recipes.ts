@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import * as recipesApi from '../api/recipes.js';
 import { buildTaxonomyPatch, updateRecipeTaxonomy, updateRecipeTaxonomyBatch } from '../lib/recipe-taxonomy.js';
+import { findRecipesForIngredients } from '../lib/find-recipes-for-ingredients.js';
 
 const taxonomyModeSchema = z
   .enum(['merge', 'replace'])
@@ -76,6 +77,54 @@ export function registerRecipeTools(server: McpServer) {
     async (params) => {
       try {
         const result = await recipesApi.getRecipes(params);
+        return successResponse(result);
+      } catch (error) {
+        return errorResponse(error);
+      }
+    },
+  );
+
+  server.tool(
+    'find_recipes_for_ingredients',
+    'Finds recipes that contain one or more requested ingredients. Ingredient names are resolved against ' +
+      "Mealie's food taxonomy internally — never pass Mealie food UUIDs, just human-readable names like " +
+      '"branzino" or "chicken thighs". Use this for exact or approximate ingredient-based recipe discovery, ' +
+      'e.g. deciding what to cook with an ingredient on hand. If an ingredient has no useful matches (see ' +
+      'resolvedIngredients/unresolvedIngredients/matchSource in the response), the MCP will not guess a ' +
+      'substitute on your behalf — retry this same tool with broader or substitutable ingredient terms you ' +
+      'choose (e.g. "branzino" with no matches -> retry with "sea bass", "whole fish", or "snapper"), then use ' +
+      'get_recipe_detailed or get_recipes_batch to inspect the most promising candidates.',
+    {
+      ingredients: z
+        .array(z.string())
+        .min(1)
+        .describe(
+          'One or more human-readable ingredient names (e.g. "branzino", "chicken thighs"). Never Mealie food ' +
+            'UUIDs — this tool resolves names against Mealie\'s food taxonomy internally.',
+        ),
+      categories: z
+        .array(z.string())
+        .optional()
+        .describe('Optional category filter, same name/slug/ID matching convention as get_recipes.'),
+      tags: z
+        .array(z.string())
+        .optional()
+        .describe('Optional tag filter, same name/slug/ID matching convention as get_recipes.'),
+      requireAllIngredients: z
+        .boolean()
+        .optional()
+        .describe(
+          'When true, only return recipes containing every resolved ingredient (AND). Default false returns ' +
+            'recipes containing any one of them, ranked by how many they contain and how few other ingredients ' +
+            'they are missing (Mealie\'s Recipe Finder behavior).',
+        ),
+      requireAllCategories: z.boolean().optional().describe('Require every given category, not just one.'),
+      requireAllTags: z.boolean().optional().describe('Require every given tag, not just one.'),
+      limit: z.number().optional().describe('Max recipes to return, default 10, capped at 50.'),
+    },
+    async (params) => {
+      try {
+        const result = await findRecipesForIngredients(params);
         return successResponse(result);
       } catch (error) {
         return errorResponse(error);

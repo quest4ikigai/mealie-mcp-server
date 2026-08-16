@@ -2,16 +2,17 @@
 
 | Category | Tools |
 |---|---|
-| Recipes | 13 |
+| Recipes | 14 |
 | Meal Plans | 5 |
 | Categories | 7 |
 | Tags | 7 |
 | Shopping Lists | 13 |
-| **Total** | **45** |
+| **Total** | **46** |
 
-## Recipe Operations (13)
+## Recipe Operations (14)
 
 - `get_recipes` — `GET /api/recipes` (paginated, search, filter by tags/categories)
+- `find_recipes_for_ingredients` — Composite: `GET /api/foods` (search) to resolve human-readable ingredient names to Mealie Food IDs, then either `GET /api/recipes/suggestions` (Mealie's Recipe Finder, ranked by fewest missing ingredients — one call per resolved food, run concurrently), `GET /api/recipes` with `foods`/`requireAllFoods` (strict AND match across every resolved ingredient), or `GET /api/recipes?search=` (free-text fallback, one call per unresolved term) depending on resolution results and `requireAllIngredients`. Never fetches the full food or recipe library.
 - `get_recipe_detailed` — `GET /api/recipes/{slug}` (full details)
 - `get_recipe_concise` — `GET /api/recipes/{slug}` (filtered to summary fields)
 - `get_recipes_batch` — Concurrent `GET /api/recipes/{slug}` for multiple slugs via `Promise.allSettled`
