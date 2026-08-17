@@ -84,6 +84,38 @@ function matchesTaxonomyFilter(
   return requireAll ? hits.every(Boolean) : hits.some(Boolean);
 }
 
+/**
+ * Applies the requested categories/tags filter client-side to a candidate set, regardless of
+ * whether it was already (supposedly) applied server-side. This is a deliberate safety net, not
+ * a redundancy: Mealie's own category/tag query params only match by slug or ID for non-UUID
+ * values — a name like "Dinner" that doesn't happen to equal the real slug exactly (e.g. the
+ * actual slug is "dinner") resolves to zero IDs server-side, and Mealie's filter-building code
+ * then silently *skips* the filter entirely on an empty ID list rather than filtering to zero
+ * results. Without this, categories/tags can appear to be ignored. Notes any recipes this drops.
+ */
+function applyTaxonomyFilter<T extends { recipe: Record<string, unknown> }>(
+  candidates: T[],
+  input: FindRecipesForIngredientsInput,
+  notes: string[],
+): T[] {
+  if ((input.categories?.length ?? 0) === 0 && (input.tags?.length ?? 0) === 0) return candidates;
+
+  const filtered = candidates.filter(
+    (c) =>
+      matchesTaxonomyFilter(c.recipe, 'recipeCategory', input.categories, input.requireAllCategories) &&
+      matchesTaxonomyFilter(c.recipe, 'tags', input.tags, input.requireAllTags),
+  );
+
+  const excluded = candidates.length - filtered.length;
+  if (excluded > 0) {
+    notes.push(
+      `${excluded} recipe(s) matched the ingredient search but were excluded by the requested categories/tags filter.`,
+    );
+  }
+
+  return filtered;
+}
+
 function toRecipeCandidate(
   recipe: Record<string, unknown>,
   matchedIngredients: string[],
@@ -163,13 +195,9 @@ async function suggestionsSearch(
     throw new Error(`Mealie recipe suggestions lookup failed for all resolved ingredients: ${failedQueries.join(', ')}.`);
   }
 
-  const candidates = [...bySlug.values()]
-    .filter(
-      (c) =>
-        matchesTaxonomyFilter(c.recipe, 'recipeCategory', input.categories, input.requireAllCategories) &&
-        matchesTaxonomyFilter(c.recipe, 'tags', input.tags, input.requireAllTags),
-    )
-    .sort((a, b) => b.matched.size - a.matched.size);
+  const candidates = applyTaxonomyFilter([...bySlug.values()], input, notes).sort(
+    (a, b) => b.matched.size - a.matched.size,
+  );
 
   return candidates.slice(0, limit).map((c) => toRecipeCandidate(c.recipe, [...c.matched], c.missingFoods, 'suggestions'));
 }
@@ -177,13 +205,19 @@ async function suggestionsSearch(
 /**
  * Strict AND match across every resolved ingredient via Mealie's normal recipe search
  * (GET /api/recipes?foods=...&requireAllFoods=true). Categories/tags are passed straight
- * through to Mealie rather than filtered client-side, since this endpoint supports them natively.
+ * through to Mealie, which usually applies them server-side, but applyTaxonomyFilter is still
+ * run as a safety net (see its docstring) — so we overfetch when a taxonomy filter is present,
+ * the same way the other search strategies do.
  */
 async function foodFilterSearch(
   resolved: ResolvedIngredient[],
   input: FindRecipesForIngredientsInput,
   limit: number,
+  notes: string[],
 ): Promise<RecipeCandidate[]> {
+  const hasTaxonomyFilter = (input.categories?.length ?? 0) > 0 || (input.tags?.length ?? 0) > 0;
+  const perPage = hasTaxonomyFilter ? Math.min(limit * OVERFETCH_MULTIPLIER, MAX_OVERFETCH) : limit;
+
   const page = await recipesApi.searchRecipesByFilter({
     foods: resolved.map((r) => r.foodId),
     requireAllFoods: true,
@@ -191,11 +225,17 @@ async function foodFilterSearch(
     tags: input.tags,
     requireAllCategories: input.requireAllCategories,
     requireAllTags: input.requireAllTags,
-    perPage: limit,
+    perPage,
   });
 
   const matchedNames = resolved.map((r) => r.query);
-  return page.items.map((recipe) => toRecipeCandidate(recipe, matchedNames, [], 'food-filter'));
+  const candidates = applyTaxonomyFilter(
+    page.items.map((recipe) => ({ recipe })),
+    input,
+    notes,
+  );
+
+  return candidates.slice(0, limit).map((c) => toRecipeCandidate(c.recipe, matchedNames, [], 'food-filter'));
 }
 
 /**
@@ -211,7 +251,9 @@ async function textSearchFallback(
 ): Promise<RecipeCandidate[]> {
   if (terms.length === 0) return [];
 
-  const perCallLimit = terms.length > 1 ? Math.min(limit * OVERFETCH_MULTIPLIER, MAX_OVERFETCH) : limit;
+  const hasTaxonomyFilter = (input.categories?.length ?? 0) > 0 || (input.tags?.length ?? 0) > 0;
+  const perCallLimit =
+    terms.length > 1 || hasTaxonomyFilter ? Math.min(limit * OVERFETCH_MULTIPLIER, MAX_OVERFETCH) : limit;
 
   const settled = await Promise.allSettled(
     terms.map((term) =>
@@ -261,6 +303,7 @@ async function textSearchFallback(
     entries = entries.filter((e) => successfulTerms.every((t) => e.matched.has(t)));
   }
 
+  entries = applyTaxonomyFilter(entries, input, notes);
   entries.sort((a, b) => b.matched.size - a.matched.size);
 
   return entries.slice(0, limit).map((e) => toRecipeCandidate(e.recipe, [...e.matched], [], 'text-search'));
@@ -312,7 +355,7 @@ export async function findRecipesForIngredients(
   }
 
   const recipes = useFoodFilter
-    ? await foodFilterSearch(resolved, input, limit)
+    ? await foodFilterSearch(resolved, input, limit, notes)
     : await suggestionsSearch(resolved, input, limit, notes);
 
   if (recipes.length > 0) {

@@ -318,6 +318,67 @@ describe('taxonomy filtering', () => {
     );
     expect(mockGetRecipeSuggestions).not.toHaveBeenCalled();
   });
+
+  it('applies the category filter to text-search fallback results, with a note when recipes are excluded', async () => {
+    // Regression test: Mealie's own category/tag query params only match by slug/ID for non-UUID
+    // values. A name like "Dinner" that doesn't exactly equal the real slug ("dinner") resolves
+    // to zero category IDs server-side, and Mealie's filter-building code then silently *skips*
+    // the filter entirely rather than filtering to zero results — so an unresolved ingredient
+    // (branzino) falling back to text search would return recipes regardless of category.
+    mockGetFoods.mockResolvedValue(paginated([]));
+    mockSearchRecipesByFilter.mockResolvedValue(
+      paginated([
+        recipe({ slug: 'dinner-branzino', name: 'Dinner Branzino', recipeCategory: [{ name: 'Dinner', slug: 'dinner' }] }),
+        recipe({ slug: 'lunch-branzino', name: 'Lunch Branzino', recipeCategory: [{ name: 'Lunch', slug: 'lunch' }] }),
+      ]),
+    );
+
+    const result = await findRecipesForIngredients({ ingredients: ['branzino'], categories: ['Dinner'] });
+
+    expect(result.matchSource).toBe('text-search');
+    expect(result.recipes.map((r) => r.slug)).toEqual(['dinner-branzino']);
+    expect(result.notes.some((n) => n.includes('excluded by the requested categories/tags filter'))).toBe(true);
+  });
+
+  it('applies the category filter to the zero-suggestions text-search fallback for a resolved ingredient', async () => {
+    mockGetFoods.mockResolvedValue(paginated([food({ id: 'branzino-id', name: 'Branzino' })]));
+    mockGetRecipeSuggestions.mockResolvedValue({ items: [] });
+    mockSearchRecipesByFilter.mockResolvedValue(
+      paginated([
+        recipe({ slug: 'dinner-branzino', recipeCategory: [{ name: 'Dinner', slug: 'dinner' }] }),
+        recipe({ slug: 'lunch-branzino', recipeCategory: [{ name: 'Lunch', slug: 'lunch' }] }),
+      ]),
+    );
+
+    const result = await findRecipesForIngredients({ ingredients: ['branzino'], categories: ['Dinner'] });
+
+    expect(result.matchSource).toBe('text-search');
+    expect(result.recipes.map((r) => r.slug)).toEqual(['dinner-branzino']);
+  });
+
+  it('applies the category filter as a client-side safety net on the food-filter path too', async () => {
+    mockGetFoods.mockImplementation(({ search }) => {
+      if (search === 'salmon') return Promise.resolve(paginated([food({ id: 'salmon-id', name: 'Salmon' })]));
+      if (search === 'broccoli') return Promise.resolve(paginated([food({ id: 'broccoli-id', name: 'Broccoli' })]));
+      return Promise.resolve(paginated([]));
+    });
+    // Simulates Mealie silently not applying its own category filter (the underlying bug), so
+    // both a matching and non-matching recipe come back from the server.
+    mockSearchRecipesByFilter.mockResolvedValue(
+      paginated([
+        recipe({ slug: 'dinner-hit', recipeCategory: [{ name: 'Dinner', slug: 'dinner' }] }),
+        recipe({ slug: 'lunch-hit', recipeCategory: [{ name: 'Lunch', slug: 'lunch' }] }),
+      ]),
+    );
+
+    const result = await findRecipesForIngredients({
+      ingredients: ['salmon', 'broccoli'],
+      requireAllIngredients: true,
+      categories: ['Dinner'],
+    });
+
+    expect(result.recipes.map((r) => r.slug)).toEqual(['dinner-hit']);
+  });
 });
 
 describe('limit handling', () => {
