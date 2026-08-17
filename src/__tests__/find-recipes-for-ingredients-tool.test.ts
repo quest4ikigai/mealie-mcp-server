@@ -20,6 +20,14 @@ vi.mock('../api/foods.js', () => ({
   getFoods: vi.fn(),
 }));
 
+vi.mock('../api/categories.js', () => ({
+  getCategories: vi.fn(),
+}));
+
+vi.mock('../api/tags.js', () => ({
+  getTags: vi.fn(),
+}));
+
 import * as foodsApi from '../api/foods.js';
 import * as recipesApi from '../api/recipes.js';
 import { registerRecipeTools } from '../tools/recipes.js';

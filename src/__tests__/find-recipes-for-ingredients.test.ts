@@ -9,9 +9,20 @@ vi.mock('../api/recipes.js', () => ({
   searchRecipesByFilter: vi.fn(),
 }));
 
+vi.mock('../api/categories.js', () => ({
+  getCategories: vi.fn(),
+}));
+
+vi.mock('../api/tags.js', () => ({
+  getTags: vi.fn(),
+}));
+
 import * as foodsApi from '../api/foods.js';
 import * as recipesApi from '../api/recipes.js';
+import * as categoriesApi from '../api/categories.js';
+import * as tagsApi from '../api/tags.js';
 import { findRecipesForIngredients } from '../lib/find-recipes-for-ingredients.js';
+import { UnresolvedTaxonomyFilterError } from '../lib/taxonomy-resolution.js';
 
 function paginated<T>(items: T[]): { items: T[]; total: number; page: number; size: number } {
   return { items, total: items.length, page: 1, size: items.length };
@@ -21,14 +32,19 @@ function food(overrides: Record<string, unknown> = {}): Record<string, unknown> 
   return { id: 'food-id', name: 'Salmon', pluralName: null, aliases: [], ...overrides };
 }
 
+const DINNER = { id: 'cat-dinner', name: 'Dinner', slug: 'dinner' };
+const LUNCH = { id: 'cat-lunch', name: 'Lunch', slug: 'lunch' };
+const DAIRY_FREE = { id: 'tag-dairy-free', name: 'Dairy-Free', slug: 'dairy-free' };
+const SPICY = { id: 'tag-spicy', name: 'Spicy', slug: 'spicy' };
+
 function recipe(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     id: 'recipe-id',
     name: 'Whole Roasted Branzino',
     slug: 'whole-roasted-branzino',
     description: 'A simple roasted fish',
-    recipeCategory: [{ name: 'Dinner', slug: 'dinner' }],
-    tags: [{ name: 'Mediterranean', slug: 'mediterranean' }],
+    recipeCategory: [{ id: DINNER.id, name: DINNER.name, slug: DINNER.slug }],
+    tags: [],
     totalTime: 'PT35M',
     ...overrides,
   };
@@ -44,11 +60,15 @@ function suggestionItem(
 const mockGetFoods = vi.mocked(foodsApi.getFoods);
 const mockGetRecipeSuggestions = vi.mocked(recipesApi.getRecipeSuggestions);
 const mockSearchRecipesByFilter = vi.mocked(recipesApi.searchRecipesByFilter);
+const mockGetCategories = vi.mocked(categoriesApi.getCategories);
+const mockGetTags = vi.mocked(tagsApi.getTags);
 
 beforeEach(() => {
   vi.clearAllMocks();
   // Safe default for tests that don't care about the zero-results text-search fallback.
   mockSearchRecipesByFilter.mockResolvedValue(paginated([]));
+  mockGetCategories.mockResolvedValue(paginated([DINNER, LUNCH]));
+  mockGetTags.mockResolvedValue(paginated([DAIRY_FREE, SPICY]));
 });
 
 describe('ingredient resolution', () => {
@@ -205,8 +225,12 @@ describe('recipe matching', () => {
     expect(mockSearchRecipesByFilter).toHaveBeenCalledWith(expect.objectContaining({ search: 'branzino' }));
     expect(result.matchSource).toBe('text-search');
     expect(result.recipes).toHaveLength(1);
-    expect(result.recipes[0]).toMatchObject({ slug: 'whole-roasted-branzino', matchSource: 'text-search' });
-    expect(result.notes.some((n) => n.includes('Recipe Finder'))).toBe(true);
+    expect(result.recipes[0]).toMatchObject({
+      name: 'Whole Roasted Branzino',
+      slug: 'whole-roasted-branzino',
+      matchSource: 'text-search',
+      matchedIngredients: ['branzino'],
+    });
   });
 
   it('falls back to text search when the requireAllIngredients food-filter yields zero results', async () => {
@@ -231,23 +255,30 @@ describe('recipe matching', () => {
     expect(result.recipes.length).toBeGreaterThan(0);
   });
 
-  it('falls back to Mealie normal recipe search when the ingredient has no Food match', async () => {
-    mockGetFoods.mockResolvedValue(paginated([]));
-    mockSearchRecipesByFilter.mockResolvedValue(paginated([recipe({ name: 'Sea Bass Piccata', slug: 'sea-bass-piccata' })]));
-
-    const result = await findRecipesForIngredients({ ingredients: ['sea bass'] });
-
-    expect(mockSearchRecipesByFilter).toHaveBeenCalledWith(
-      expect.objectContaining({ search: 'sea bass' }),
-    );
-    expect(result.matchSource).toBe('text-search');
-    expect(result.recipes).toHaveLength(1);
-    expect(result.recipes[0]).toMatchObject({
-      name: 'Sea Bass Piccata',
-      slug: 'sea-bass-piccata',
-      matchSource: 'text-search',
-      matchedIngredients: ['sea bass'],
+  it('drops the discarded suggestions-path exclusion note when falling back to text search', async () => {
+    // Regression test: when the primary suggestions attempt finds a candidate that gets excluded
+    // by the category filter client-side (leaving zero results, since Mealie's suggestions
+    // endpoint has no category param at all) and falls back to text search, the discarded primary
+    // attempt's exclusion note shouldn't survive into the final response — it describes data that
+    // isn't part of what's actually returned. The text-search path itself now trusts Mealie's own
+    // (server-side) category filtering, so it generates no exclusion note of its own either.
+    mockGetFoods.mockResolvedValue(paginated([food({ id: 'branzino-id', name: 'Branzino' })]));
+    mockGetRecipeSuggestions.mockResolvedValue({
+      items: [suggestionItem(recipe({ slug: 'brunch-branzino', recipeCategory: [{ id: 'cat-brunch', name: 'Brunch', slug: 'brunch' }] }))],
     });
+    mockGetCategories.mockResolvedValue(paginated([DINNER, LUNCH, { id: 'cat-brunch', name: 'Brunch', slug: 'brunch' }]));
+    mockSearchRecipesByFilter.mockImplementation(({ categories }) => {
+      // Simulates Mealie's own (now-correct, given a real ID) server-side category filtering.
+      if (categories?.includes(DINNER.id)) return Promise.resolve(paginated([recipe({ slug: 'dinner-branzino' })]));
+      return Promise.resolve(paginated([]));
+    });
+
+    const result = await findRecipesForIngredients({ ingredients: ['branzino'], categories: ['Dinner'] });
+
+    expect(result.matchSource).toBe('text-search');
+    expect(result.recipes.map((r) => r.slug)).toEqual(['dinner-branzino']);
+    const exclusionNotes = result.notes.filter((n) => n.includes('excluded by the requested categories/tags filter'));
+    expect(exclusionNotes).toHaveLength(0);
   });
 
   it('returns a structured response with recipe name and slug for a successful exact match', async () => {
@@ -263,12 +294,51 @@ describe('recipe matching', () => {
 });
 
 describe('taxonomy filtering', () => {
-  it('filters suggestions results by category client-side', async () => {
+  it('resolves category/tag names to canonical IDs before searching, instead of forwarding raw names', async () => {
+    // Regression test: Mealie's own category/tag query params only match by exact slug/ID for
+    // non-UUID input and silently *skip* the filter (rather than filtering to zero) when nothing
+    // resolves — resolving to IDs up front via the shared resolver avoids that entirely.
+    mockGetFoods.mockImplementation(({ search }) => {
+      if (search === 'salmon') return Promise.resolve(paginated([food({ id: 'salmon-id', name: 'Salmon' })]));
+      if (search === 'broccoli') return Promise.resolve(paginated([food({ id: 'broccoli-id', name: 'Broccoli' })]));
+      return Promise.resolve(paginated([]));
+    });
+    mockSearchRecipesByFilter.mockResolvedValue(paginated([recipe()]));
+
+    await findRecipesForIngredients({
+      ingredients: ['salmon', 'broccoli'],
+      requireAllIngredients: true,
+      categories: ['Dinner'],
+      tags: ['Dairy-Free'],
+    });
+
+    expect(mockSearchRecipesByFilter).toHaveBeenCalledWith(
+      expect.objectContaining({ categories: [DINNER.id], tags: [DAIRY_FREE.id] }),
+    );
+  });
+
+  it('throws a clear error instead of silently searching unfiltered when a category does not resolve', async () => {
+    mockGetFoods.mockResolvedValue(paginated([food({ id: 'salmon-id', name: 'Salmon' })]));
+
+    await expect(findRecipesForIngredients({ ingredients: ['salmon'], categories: ['Brunch'] })).rejects.toThrow(
+      /Brunch/,
+    );
+    expect(mockGetFoods).not.toHaveBeenCalled();
+    expect(mockGetRecipeSuggestions).not.toHaveBeenCalled();
+  });
+
+  it('throws UnresolvedTaxonomyFilterError for an unknown tag', async () => {
+    await expect(findRecipesForIngredients({ ingredients: ['salmon'], tags: ['Nonexistent'] })).rejects.toThrow(
+      UnresolvedTaxonomyFilterError,
+    );
+  });
+
+  it('filters suggestions results by category client-side, since Mealie Recipe Finder has no category param at all', async () => {
     mockGetFoods.mockResolvedValue(paginated([food({ id: 'salmon-id', name: 'Salmon' })]));
     mockGetRecipeSuggestions.mockResolvedValue({
       items: [
-        suggestionItem(recipe({ slug: 'dinner-salmon', recipeCategory: [{ name: 'Dinner', slug: 'dinner' }] })),
-        suggestionItem(recipe({ slug: 'breakfast-salmon', recipeCategory: [{ name: 'Breakfast', slug: 'breakfast' }] })),
+        suggestionItem(recipe({ slug: 'dinner-salmon', recipeCategory: [{ id: DINNER.id, name: DINNER.name, slug: DINNER.slug }] })),
+        suggestionItem(recipe({ slug: 'lunch-salmon', recipeCategory: [{ id: LUNCH.id, name: LUNCH.name, slug: LUNCH.slug }] })),
       ],
     });
 
@@ -281,8 +351,8 @@ describe('taxonomy filtering', () => {
     mockGetFoods.mockResolvedValue(paginated([food({ id: 'salmon-id', name: 'Salmon' })]));
     mockGetRecipeSuggestions.mockResolvedValue({
       items: [
-        suggestionItem(recipe({ slug: 'df-salmon', tags: [{ name: 'Dairy-Free', slug: 'dairy-free' }] })),
-        suggestionItem(recipe({ slug: 'other-salmon', tags: [{ name: 'Spicy', slug: 'spicy' }] })),
+        suggestionItem(recipe({ slug: 'df-salmon', tags: [{ id: DAIRY_FREE.id, name: DAIRY_FREE.name, slug: DAIRY_FREE.slug }] })),
+        suggestionItem(recipe({ slug: 'spicy-salmon', tags: [{ id: SPICY.id, name: SPICY.name, slug: SPICY.slug }] })),
       ],
     });
 
@@ -291,7 +361,7 @@ describe('taxonomy filtering', () => {
     expect(result.recipes.map((r) => r.slug)).toEqual(['df-salmon']);
   });
 
-  it('passes categories/tags directly to Mealie for the requireAllIngredients food-filter path', async () => {
+  it('passes resolved category/tag IDs directly to Mealie for the requireAllIngredients food-filter path', async () => {
     mockGetFoods.mockImplementation(({ search }) => {
       if (search === 'salmon') return Promise.resolve(paginated([food({ id: 'salmon-id', name: 'Salmon' })]));
       if (search === 'broccoli') return Promise.resolve(paginated([food({ id: 'broccoli-id', name: 'Broccoli' })]));
@@ -311,97 +381,24 @@ describe('taxonomy filtering', () => {
       expect.objectContaining({
         foods: ['salmon-id', 'broccoli-id'],
         requireAllFoods: true,
-        categories: ['Dinner'],
-        tags: ['Dairy-Free'],
+        categories: [DINNER.id],
+        tags: [DAIRY_FREE.id],
         requireAllCategories: true,
       }),
     );
     expect(mockGetRecipeSuggestions).not.toHaveBeenCalled();
   });
 
-  it('applies the category filter to text-search fallback results, with a note when recipes are excluded', async () => {
-    // Regression test: Mealie's own category/tag query params only match by slug/ID for non-UUID
-    // values. A name like "Dinner" that doesn't exactly equal the real slug ("dinner") resolves
-    // to zero category IDs server-side, and Mealie's filter-building code then silently *skips*
-    // the filter entirely rather than filtering to zero results — so an unresolved ingredient
-    // (branzino) falling back to text search would return recipes regardless of category.
+  it('passes resolved category IDs to the text-search fallback and trusts Mealie to filter correctly', async () => {
     mockGetFoods.mockResolvedValue(paginated([]));
-    mockSearchRecipesByFilter.mockResolvedValue(
-      paginated([
-        recipe({ slug: 'dinner-branzino', name: 'Dinner Branzino', recipeCategory: [{ name: 'Dinner', slug: 'dinner' }] }),
-        recipe({ slug: 'lunch-branzino', name: 'Lunch Branzino', recipeCategory: [{ name: 'Lunch', slug: 'lunch' }] }),
-      ]),
-    );
+    mockSearchRecipesByFilter.mockResolvedValue(paginated([recipe({ slug: 'dinner-branzino' })]));
 
     const result = await findRecipesForIngredients({ ingredients: ['branzino'], categories: ['Dinner'] });
 
-    expect(result.matchSource).toBe('text-search');
-    expect(result.recipes.map((r) => r.slug)).toEqual(['dinner-branzino']);
-    expect(result.notes.some((n) => n.includes('excluded by the requested categories/tags filter'))).toBe(true);
-  });
-
-  it('applies the category filter to the zero-suggestions text-search fallback for a resolved ingredient', async () => {
-    mockGetFoods.mockResolvedValue(paginated([food({ id: 'branzino-id', name: 'Branzino' })]));
-    mockGetRecipeSuggestions.mockResolvedValue({ items: [] });
-    mockSearchRecipesByFilter.mockResolvedValue(
-      paginated([
-        recipe({ slug: 'dinner-branzino', recipeCategory: [{ name: 'Dinner', slug: 'dinner' }] }),
-        recipe({ slug: 'lunch-branzino', recipeCategory: [{ name: 'Lunch', slug: 'lunch' }] }),
-      ]),
+    expect(mockSearchRecipesByFilter).toHaveBeenCalledWith(
+      expect.objectContaining({ search: 'branzino', categories: [DINNER.id] }),
     );
-
-    const result = await findRecipesForIngredients({ ingredients: ['branzino'], categories: ['Dinner'] });
-
-    expect(result.matchSource).toBe('text-search');
     expect(result.recipes.map((r) => r.slug)).toEqual(['dinner-branzino']);
-  });
-
-  it('reports the categories/tags exclusion only once, not once per discarded attempt', async () => {
-    // Regression test: when the primary suggestions attempt finds a candidate that gets excluded
-    // by the category filter (leaving zero results) and falls back to text search, which also
-    // excludes a non-matching candidate, the discarded primary attempt's note shouldn't survive
-    // alongside the fallback's — the caller only cares about the data actually being returned.
-    mockGetFoods.mockResolvedValue(paginated([food({ id: 'branzino-id', name: 'Branzino' })]));
-    mockGetRecipeSuggestions.mockResolvedValue({
-      items: [suggestionItem(recipe({ slug: 'brunch-branzino', recipeCategory: [{ name: 'Brunch', slug: 'brunch' }] }))],
-    });
-    mockSearchRecipesByFilter.mockResolvedValue(
-      paginated([
-        recipe({ slug: 'dinner-branzino', recipeCategory: [{ name: 'Dinner', slug: 'dinner' }] }),
-        recipe({ slug: 'lunch-branzino', recipeCategory: [{ name: 'Lunch', slug: 'lunch' }] }),
-      ]),
-    );
-
-    const result = await findRecipesForIngredients({ ingredients: ['branzino'], categories: ['Dinner'] });
-
-    expect(result.matchSource).toBe('text-search');
-    expect(result.recipes.map((r) => r.slug)).toEqual(['dinner-branzino']);
-    const exclusionNotes = result.notes.filter((n) => n.includes('excluded by the requested categories/tags filter'));
-    expect(exclusionNotes).toHaveLength(1);
-  });
-
-  it('applies the category filter as a client-side safety net on the food-filter path too', async () => {
-    mockGetFoods.mockImplementation(({ search }) => {
-      if (search === 'salmon') return Promise.resolve(paginated([food({ id: 'salmon-id', name: 'Salmon' })]));
-      if (search === 'broccoli') return Promise.resolve(paginated([food({ id: 'broccoli-id', name: 'Broccoli' })]));
-      return Promise.resolve(paginated([]));
-    });
-    // Simulates Mealie silently not applying its own category filter (the underlying bug), so
-    // both a matching and non-matching recipe come back from the server.
-    mockSearchRecipesByFilter.mockResolvedValue(
-      paginated([
-        recipe({ slug: 'dinner-hit', recipeCategory: [{ name: 'Dinner', slug: 'dinner' }] }),
-        recipe({ slug: 'lunch-hit', recipeCategory: [{ name: 'Lunch', slug: 'lunch' }] }),
-      ]),
-    );
-
-    const result = await findRecipesForIngredients({
-      ingredients: ['salmon', 'broccoli'],
-      requireAllIngredients: true,
-      categories: ['Dinner'],
-    });
-
-    expect(result.recipes.map((r) => r.slug)).toEqual(['dinner-hit']);
   });
 });
 
@@ -484,5 +481,16 @@ describe('efficiency', () => {
     await findRecipesForIngredients({ ingredients: ['salmon', 'broccoli'], limit: 20 });
 
     expect(mockGetRecipeSuggestions).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not resolve categories/tags at all when none are given', async () => {
+    mockGetFoods.mockResolvedValue(paginated([food({ id: 'salmon-id', name: 'Salmon' })]));
+    mockGetRecipeSuggestions.mockResolvedValue({ items: [] });
+    mockSearchRecipesByFilter.mockResolvedValue(paginated([]));
+
+    await findRecipesForIngredients({ ingredients: ['salmon'] });
+
+    expect(mockGetCategories).not.toHaveBeenCalled();
+    expect(mockGetTags).not.toHaveBeenCalled();
   });
 });
