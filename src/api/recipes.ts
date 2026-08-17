@@ -80,3 +80,47 @@ export async function updateRecipe(
 ): Promise<Record<string, unknown>> {
   return apiPut(`/api/recipes/${slug}`, data);
 }
+
+export interface RecipeSuggestionItem {
+  recipe: Record<string, unknown>;
+  missingFoods: Record<string, unknown>[];
+  missingTools: Record<string, unknown>[];
+}
+
+// GET /api/recipes/suggestions — Mealie's Recipe Finder. Ranks recipes by fewest missing
+// foods/tools relative to the given `foods`/`tools` IDs. `includeFoodsOnHand`/`includeToolsOnHand`
+// default true on the Mealie side (pulling in the household's declared pantry); we default them
+// to false at the call site below so results depend only on what was explicitly asked for.
+export async function getRecipeSuggestions(
+  params: {
+    foods?: string[];
+    tools?: string[];
+    limit?: number;
+    maxMissingFoods?: number;
+    maxMissingTools?: number;
+    includeFoodsOnHand?: boolean;
+    includeToolsOnHand?: boolean;
+  },
+): Promise<{ items: RecipeSuggestionItem[] }> {
+  const qs = buildQueryString(params);
+  return apiGet(`/api/recipes/suggestions${qs ? `?${qs}` : ''}`);
+}
+
+// GET /api/recipes — same listing endpoint as getRecipes above, but serializes `foods`/`categories`/`tags`
+// as repeated query keys (required by Mealie's FastAPI list params) instead of comma-joining, so multi-value
+// `foods` filters resolve correctly. Used by find_recipes_for_ingredients for its AND-filter and text-search paths.
+export async function searchRecipesByFilter(
+  params: {
+    search?: string;
+    foods?: string[];
+    requireAllFoods?: boolean;
+    categories?: string[];
+    tags?: string[];
+    requireAllCategories?: boolean;
+    requireAllTags?: boolean;
+    perPage?: number;
+  },
+): Promise<PaginatedResult<Record<string, unknown>>> {
+  const qs = buildQueryString(params);
+  return apiGet(`/api/recipes${qs ? `?${qs}` : ''}`);
+}
