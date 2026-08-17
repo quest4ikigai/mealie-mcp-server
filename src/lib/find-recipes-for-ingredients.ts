@@ -39,6 +39,14 @@ const MAX_LIMIT = 50;
 const OVERFETCH_MULTIPLIER = 4;
 const MAX_OVERFETCH = 100;
 
+// Mealie's suggestions endpoint defaults maxMissingFoods to 5 and *excludes* any recipe whose
+// count of other (non-requested) structured-Food ingredients exceeds it — it's tuned for "what
+// can I nearly make from my pantry", not "find recipes containing X". A 7-ingredient recipe like
+// "Lemon Herb Grilled Salmon" (6 other foods) would be silently dropped even though it contains
+// the exact requested salmon Food ID. We want ranking, not exclusion, so this is set far above any
+// realistic ingredient count.
+const UNBOUNDED_MISSING_FOODS = 1000;
+
 function clampLimit(limit: number | undefined): number {
   const n = Math.trunc(limit ?? DEFAULT_LIMIT);
   if (!Number.isFinite(n)) return DEFAULT_LIMIT;
@@ -115,6 +123,7 @@ async function suggestionsSearch(
       recipesApi.getRecipeSuggestions({
         foods: [r.foodId],
         limit: perCallLimit,
+        maxMissingFoods: UNBOUNDED_MISSING_FOODS,
         includeFoodsOnHand: false,
         includeToolsOnHand: false,
       }),
@@ -306,11 +315,30 @@ export async function findRecipesForIngredients(
     ? await foodFilterSearch(resolved, input, limit)
     : await suggestionsSearch(resolved, input, limit, notes);
 
+  if (recipes.length > 0) {
+    return {
+      resolvedIngredients: resolved,
+      unresolvedIngredients: unresolved,
+      matchSource: useFoodFilter ? 'food-filter' : 'suggestions',
+      recipes,
+      notes,
+    };
+  }
+
+  // Food-based matching resolved but found nothing useful — fall back to Mealie's normal
+  // text search on the original ingredient terms before giving up, same as the fully-unresolved
+  // case above. Food-based matching can legitimately come up empty (e.g. a resolved food that no
+  // recipe's structured ingredients reference yet), and text search may still surface candidates.
+  const fallbackRecipes = await textSearchFallback(ingredientQueries, input, limit, notes);
+  if (fallbackRecipes.length > 0) {
+    notes.push("No results from Mealie's Recipe Finder for the resolved ingredient(s); fell back to normal recipe text search.");
+  }
+
   return {
     resolvedIngredients: resolved,
     unresolvedIngredients: unresolved,
-    matchSource: recipes.length > 0 ? (useFoodFilter ? 'food-filter' : 'suggestions') : 'none',
-    recipes,
+    matchSource: fallbackRecipes.length > 0 ? 'text-search' : 'none',
+    recipes: fallbackRecipes,
     notes,
   };
 }

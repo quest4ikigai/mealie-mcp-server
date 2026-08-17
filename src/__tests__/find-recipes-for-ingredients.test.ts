@@ -47,6 +47,8 @@ const mockSearchRecipesByFilter = vi.mocked(recipesApi.searchRecipesByFilter);
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Safe default for tests that don't care about the zero-results text-search fallback.
+  mockSearchRecipesByFilter.mockResolvedValue(paginated([]));
 });
 
 describe('ingredient resolution', () => {
@@ -162,14 +164,71 @@ describe('recipe matching', () => {
     expect(result.notes.some((n) => n.includes('mystery vegetable'))).toBe(true);
   });
 
-  it('returns an empty recipe list without error when nothing matches', async () => {
+  it('returns an empty recipe list without error when nothing matches anywhere, including the text-search fallback', async () => {
     mockGetFoods.mockResolvedValue(paginated([food({ id: 'salmon-id', name: 'Salmon' })]));
     mockGetRecipeSuggestions.mockResolvedValue({ items: [] });
+    mockSearchRecipesByFilter.mockResolvedValue(paginated([]));
 
     const result = await findRecipesForIngredients({ ingredients: ['salmon'] });
 
     expect(result.matchSource).toBe('none');
     expect(result.recipes).toEqual([]);
+  });
+
+  it('always sends a permissive maxMissingFoods so Mealie does not silently exclude recipes with several other ingredients', async () => {
+    // Regression test: Mealie's suggestions endpoint defaults maxMissingFoods to 5 and excludes
+    // any recipe with more *other* structured-Food ingredients than that — a real recipe
+    // ("Lemon Herb Grilled Salmon", 6 other foods) was silently dropped even though it referenced
+    // the exact requested salmon Food ID.
+    mockGetFoods.mockResolvedValue(paginated([food({ id: 'salmon-id', name: 'Salmon' })]));
+    mockGetRecipeSuggestions.mockResolvedValue({ items: [suggestionItem(recipe())] });
+
+    await findRecipesForIngredients({ ingredients: ['salmon'] });
+
+    const params = mockGetRecipeSuggestions.mock.calls[0][0];
+    expect(params.maxMissingFoods).toBeGreaterThanOrEqual(100);
+  });
+
+  it('falls back to text search when the resolved ingredient has zero Recipe Finder results', async () => {
+    // Regression test: a Food that resolves successfully but whose structured suggestions
+    // search yields nothing (e.g. no recipe references it in a structured ingredient yet, or an
+    // unrelated Mealie-side quirk) should still fall back to normal recipe text search rather
+    // than reporting no results outright.
+    mockGetFoods.mockResolvedValue(paginated([food({ id: 'branzino-id', name: 'Branzino' })]));
+    mockGetRecipeSuggestions.mockResolvedValue({ items: [] });
+    mockSearchRecipesByFilter.mockResolvedValue(
+      paginated([recipe({ name: 'Whole Roasted Branzino', slug: 'whole-roasted-branzino' })]),
+    );
+
+    const result = await findRecipesForIngredients({ ingredients: ['branzino'] });
+
+    expect(mockSearchRecipesByFilter).toHaveBeenCalledWith(expect.objectContaining({ search: 'branzino' }));
+    expect(result.matchSource).toBe('text-search');
+    expect(result.recipes).toHaveLength(1);
+    expect(result.recipes[0]).toMatchObject({ slug: 'whole-roasted-branzino', matchSource: 'text-search' });
+    expect(result.notes.some((n) => n.includes('Recipe Finder'))).toBe(true);
+  });
+
+  it('falls back to text search when the requireAllIngredients food-filter yields zero results', async () => {
+    mockGetFoods.mockImplementation(({ search }) => {
+      if (search === 'salmon') return Promise.resolve(paginated([food({ id: 'salmon-id', name: 'Salmon' })]));
+      if (search === 'broccoli') return Promise.resolve(paginated([food({ id: 'broccoli-id', name: 'Broccoli' })]));
+      return Promise.resolve(paginated([]));
+    });
+    mockSearchRecipesByFilter.mockImplementation(({ foods, search }) => {
+      if (foods) return Promise.resolve(paginated([]));
+      // Same recipe surfaces for both text searches, so it survives the requireAllIngredients intersection.
+      if (search) return Promise.resolve(paginated([recipe({ slug: 'surf-and-turf' })]));
+      return Promise.resolve(paginated([]));
+    });
+
+    const result = await findRecipesForIngredients({
+      ingredients: ['salmon', 'broccoli'],
+      requireAllIngredients: true,
+    });
+
+    expect(result.matchSource).toBe('text-search');
+    expect(result.recipes.length).toBeGreaterThan(0);
   });
 
   it('falls back to Mealie normal recipe search when the ingredient has no Food match', async () => {
