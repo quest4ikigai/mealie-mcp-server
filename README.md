@@ -15,12 +15,12 @@ A [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server for [Me
 
 ## Features
 
-- **Recipe Management** — Search, create, patch, duplicate, and delete recipes. Batch-fetch multiple recipes concurrently.
+- **Recipe Management** — Search, create, patch, duplicate, and delete recipes. Batch-fetch multiple recipes with bounded concurrency.
 - **Recipe Categories & Tags Assignment** — Assign Categories and Tags to existing recipes with merge/replace semantics, name/slug/ID resolution, and optional auto-creation of missing values, without disturbing ingredients, instructions, nutrition, or any other recipe field. Available via `patch_recipe`, `update_recipe_taxonomy`, and `update_recipe_taxonomy_batch`.
 - **Meal Planning** — View, create, and bulk-create meal plans. Composite tool fetches meal plans with embedded recipe details (including nutrition) using concurrent batch requests, eliminating N+1 queries.
 - **Shopping Lists** — Full CRUD for lists and items, bulk operations, and recipe-to-list integration.
 - **Categories & Tags** — Full CRUD for organizing recipes, including empty-category/tag detection.
-- **Batch & Composite Tools** — `get_recipes_batch` and `get_recipes_detailed_batch` for concurrent recipe lookup, `get_mealplan_with_recipes` for meal plans with embedded recipe data and client-side date filtering, `update_recipe_taxonomy_batch` for bounded-concurrency category/tag updates across many recipes.
+- **Batch & Composite Tools** — `get_recipes_batch` and `get_recipes_detailed_batch` for bounded-concurrency recipe lookup, `get_mealplan_with_recipes` for meal plans with embedded recipe data and client-side date filtering, `update_recipe_taxonomy_batch` for bounded-concurrency category/tag updates across many recipes.
 - **Zero Runtime Dependencies Beyond the SDK** — Uses native `fetch`, no axios or httpx.
 
 ## Requirements
