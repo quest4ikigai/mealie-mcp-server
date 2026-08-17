@@ -84,6 +84,41 @@ function matchesTaxonomyFilter(
   return requireAll ? hits.every(Boolean) : hits.some(Boolean);
 }
 
+function hasTaxonomyFilter(input: FindRecipesForIngredientsInput): boolean {
+  return (input.categories?.length ?? 0) > 0 || (input.tags?.length ?? 0) > 0;
+}
+
+/**
+ * Once the food-filter/text-search paths trust Mealie's own category/tag filtering (see
+ * foodFilterSearch's docstring), an empty result no longer distinguishes "nothing matched the
+ * ingredient at all" from "things matched the ingredient but got filtered out by category/tag" —
+ * Mealie only ever hands back the already-filtered set. Call this when a search comes back empty
+ * and a taxonomy filter was requested: `countWithoutTaxonomyFilter` re-runs the same query without
+ * categories/tags (cheap — Mealie reports `total` regardless of page size) so the caller can still
+ * report how many recipes were excluded, the same way the suggestions path's client-side filter
+ * always could.
+ */
+async function noteIngredientMatchesExcludedByTaxonomy(
+  input: FindRecipesForIngredientsInput,
+  notes: string[],
+  countWithoutTaxonomyFilter: () => Promise<number>,
+): Promise<void> {
+  if (!hasTaxonomyFilter(input)) return;
+
+  let unfilteredCount: number;
+  try {
+    unfilteredCount = await countWithoutTaxonomyFilter();
+  } catch {
+    return;
+  }
+
+  if (unfilteredCount > 0) {
+    notes.push(
+      `${unfilteredCount} recipe(s) matched the ingredient search but were excluded by the requested categories/tags filter.`,
+    );
+  }
+}
+
 function toRecipeCandidate(
   recipe: Record<string, unknown>,
   matchedIngredients: string[],
@@ -120,8 +155,7 @@ async function suggestionsSearch(
   limit: number,
   notes: string[],
 ): Promise<RecipeCandidate[]> {
-  const hasTaxonomyFilter = (input.categories?.length ?? 0) > 0 || (input.tags?.length ?? 0) > 0;
-  const perCallLimit = hasTaxonomyFilter ? Math.min(limit * OVERFETCH_MULTIPLIER, MAX_OVERFETCH) : limit;
+  const perCallLimit = hasTaxonomyFilter(input) ? Math.min(limit * OVERFETCH_MULTIPLIER, MAX_OVERFETCH) : limit;
 
   const settled = await Promise.allSettled(
     resolved.map((r) =>
@@ -196,9 +230,12 @@ async function foodFilterSearch(
   resolved: ResolvedIngredient[],
   input: FindRecipesForIngredientsInput,
   limit: number,
+  notes: string[],
 ): Promise<RecipeCandidate[]> {
+  const foods = resolved.map((r) => r.foodId);
+
   const page = await recipesApi.searchRecipesByFilter({
-    foods: resolved.map((r) => r.foodId),
+    foods,
     requireAllFoods: true,
     categories: input.categories,
     tags: input.tags,
@@ -206,6 +243,14 @@ async function foodFilterSearch(
     requireAllTags: input.requireAllTags,
     perPage: limit,
   });
+
+  if (page.items.length === 0) {
+    await noteIngredientMatchesExcludedByTaxonomy(input, notes, async () => {
+      // perPage: 1 — only `total` is needed, not the items themselves.
+      const unfiltered = await recipesApi.searchRecipesByFilter({ foods, requireAllFoods: true, perPage: 1 });
+      return unfiltered.total;
+    });
+  }
 
   const matchedNames = resolved.map((r) => r.query);
   return page.items.map((recipe) => toRecipeCandidate(recipe, matchedNames, [], 'food-filter'));
@@ -218,22 +263,29 @@ async function foodFilterSearch(
  * `input.categories`/`input.tags` are resolved IDs, trusted to Mealie's own filtering (see
  * foodFilterSearch's docstring).
  */
-async function textSearchFallback(
+interface TermMatch {
+  recipe: Record<string, unknown>;
+  matched: Set<string>;
+}
+
+/**
+ * Runs one Mealie search per term and merges the results by slug. `includeTaxonomyFilter`
+ * governs whether categories/tags are sent — kept togglable so textSearchFallback can re-run the
+ * exact same query without them as a cheap diagnostic when the filtered version comes back empty
+ * (see noteIngredientMatchesExcludedByTaxonomy).
+ */
+async function searchTermsAndMerge(
   terms: string[],
   input: FindRecipesForIngredientsInput,
-  limit: number,
-  notes: string[],
-): Promise<RecipeCandidate[]> {
-  if (terms.length === 0) return [];
-
-  const perCallLimit = terms.length > 1 ? Math.min(limit * OVERFETCH_MULTIPLIER, MAX_OVERFETCH) : limit;
-
+  perCallLimit: number,
+  includeTaxonomyFilter: boolean,
+): Promise<{ entries: TermMatch[]; failedTerms: string[] }> {
   const settled = await Promise.allSettled(
     terms.map((term) =>
       recipesApi.searchRecipesByFilter({
         search: term,
-        categories: input.categories,
-        tags: input.tags,
+        categories: includeTaxonomyFilter ? input.categories : undefined,
+        tags: includeTaxonomyFilter ? input.tags : undefined,
         requireAllCategories: input.requireAllCategories,
         requireAllTags: input.requireAllTags,
         perPage: perCallLimit,
@@ -243,7 +295,7 @@ async function textSearchFallback(
 
   const failedTerms: string[] = [];
   const successfulTerms: string[] = [];
-  const bySlug = new Map<string, { recipe: Record<string, unknown>; matched: Set<string> }>();
+  const bySlug = new Map<string, TermMatch>();
 
   settled.forEach((result, i) => {
     const term = terms[i];
@@ -264,6 +316,26 @@ async function textSearchFallback(
     }
   });
 
+  let entries = [...bySlug.values()];
+  if (input.requireAllIngredients && successfulTerms.length > 1) {
+    entries = entries.filter((e) => successfulTerms.every((t) => e.matched.has(t)));
+  }
+
+  return { entries, failedTerms };
+}
+
+async function textSearchFallback(
+  terms: string[],
+  input: FindRecipesForIngredientsInput,
+  limit: number,
+  notes: string[],
+): Promise<RecipeCandidate[]> {
+  if (terms.length === 0) return [];
+
+  const perCallLimit = terms.length > 1 ? Math.min(limit * OVERFETCH_MULTIPLIER, MAX_OVERFETCH) : limit;
+
+  const { entries, failedTerms } = await searchTermsAndMerge(terms, input, perCallLimit, true);
+
   if (failedTerms.length > 0) {
     notes.push(`Text search failed for: ${failedTerms.join(', ')}.`);
   }
@@ -271,9 +343,11 @@ async function textSearchFallback(
     throw new Error(`Mealie recipe search failed for all ingredient terms: ${failedTerms.join(', ')}.`);
   }
 
-  let entries = [...bySlug.values()];
-  if (input.requireAllIngredients && successfulTerms.length > 1) {
-    entries = entries.filter((e) => successfulTerms.every((t) => e.matched.has(t)));
+  if (entries.length === 0) {
+    await noteIngredientMatchesExcludedByTaxonomy(input, notes, async () => {
+      const unfiltered = await searchTermsAndMerge(terms, input, perCallLimit, false);
+      return unfiltered.entries.length;
+    });
   }
 
   entries.sort((a, b) => b.matched.size - a.matched.size);
@@ -340,7 +414,7 @@ export async function findRecipesForIngredients(
   // a note about data that isn't part of the response.
   const primaryNotes: string[] = [];
   const recipes = useFoodFilter
-    ? await foodFilterSearch(resolved, resolvedInput, limit)
+    ? await foodFilterSearch(resolved, resolvedInput, limit, primaryNotes)
     : await suggestionsSearch(resolved, resolvedInput, limit, primaryNotes);
 
   if (recipes.length > 0) {

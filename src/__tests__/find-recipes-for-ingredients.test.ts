@@ -400,6 +400,36 @@ describe('taxonomy filtering', () => {
     );
     expect(result.recipes.map((r) => r.slug)).toEqual(['dinner-branzino']);
   });
+
+  it('explains a zero-result text-search fallback with a note when the ingredient matched but the category filter excluded everything', async () => {
+    // Regression test: once the text-search path trusts Mealie's own category filtering
+    // (server-side), an empty result no longer distinguishes "no ingredient match" from
+    // "matched, but filtered out by category" — the response should still explain the latter.
+    mockGetFoods.mockResolvedValue(paginated([]));
+    mockSearchRecipesByFilter.mockImplementation(({ categories }) => {
+      if (categories) return Promise.resolve(paginated([])); // Mealie's own (correct) filtering finds nothing
+      return Promise.resolve(paginated([recipe({ slug: 'lunch-branzino' }), recipe({ slug: 'other-branzino' })]));
+    });
+
+    const result = await findRecipesForIngredients({ ingredients: ['branzino'], categories: ['Dinner'] });
+
+    expect(result.matchSource).toBe('none');
+    expect(result.recipes).toEqual([]);
+    expect(
+      result.notes.some((n) => n.includes('2 recipe(s) matched the ingredient search but were excluded by the requested categories/tags filter')),
+    ).toBe(true);
+  });
+
+  it('does not run the diagnostic recheck, or add a note, when there is no taxonomy filter at all', async () => {
+    mockGetFoods.mockResolvedValue(paginated([]));
+    mockSearchRecipesByFilter.mockResolvedValue(paginated([]));
+
+    const result = await findRecipesForIngredients({ ingredients: ['branzino'] });
+
+    expect(result.notes.some((n) => n.includes('excluded by the requested categories/tags filter'))).toBe(false);
+    // One call for the actual search; no second diagnostic call since there's no filter to explain.
+    expect(mockSearchRecipesByFilter).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('limit handling', () => {
