@@ -356,6 +356,30 @@ describe('taxonomy filtering', () => {
     expect(result.recipes.map((r) => r.slug)).toEqual(['dinner-branzino']);
   });
 
+  it('reports the categories/tags exclusion only once, not once per discarded attempt', async () => {
+    // Regression test: when the primary suggestions attempt finds a candidate that gets excluded
+    // by the category filter (leaving zero results) and falls back to text search, which also
+    // excludes a non-matching candidate, the discarded primary attempt's note shouldn't survive
+    // alongside the fallback's — the caller only cares about the data actually being returned.
+    mockGetFoods.mockResolvedValue(paginated([food({ id: 'branzino-id', name: 'Branzino' })]));
+    mockGetRecipeSuggestions.mockResolvedValue({
+      items: [suggestionItem(recipe({ slug: 'brunch-branzino', recipeCategory: [{ name: 'Brunch', slug: 'brunch' }] }))],
+    });
+    mockSearchRecipesByFilter.mockResolvedValue(
+      paginated([
+        recipe({ slug: 'dinner-branzino', recipeCategory: [{ name: 'Dinner', slug: 'dinner' }] }),
+        recipe({ slug: 'lunch-branzino', recipeCategory: [{ name: 'Lunch', slug: 'lunch' }] }),
+      ]),
+    );
+
+    const result = await findRecipesForIngredients({ ingredients: ['branzino'], categories: ['Dinner'] });
+
+    expect(result.matchSource).toBe('text-search');
+    expect(result.recipes.map((r) => r.slug)).toEqual(['dinner-branzino']);
+    const exclusionNotes = result.notes.filter((n) => n.includes('excluded by the requested categories/tags filter'));
+    expect(exclusionNotes).toHaveLength(1);
+  });
+
   it('applies the category filter as a client-side safety net on the food-filter path too', async () => {
     mockGetFoods.mockImplementation(({ search }) => {
       if (search === 'salmon') return Promise.resolve(paginated([food({ id: 'salmon-id', name: 'Salmon' })]));

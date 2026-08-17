@@ -354,11 +354,16 @@ export async function findRecipesForIngredients(
     notes.push('requireAllIngredients only applies to the ingredients that were successfully resolved to a Mealie food.');
   }
 
+  // Notes from this attempt (e.g. taxonomy exclusions) only matter if we actually return its
+  // results below — kept in a separate array so a discarded attempt can't leave behind a
+  // duplicate/confusing note alongside the fallback's own note about the same exclusion.
+  const primaryNotes: string[] = [];
   const recipes = useFoodFilter
-    ? await foodFilterSearch(resolved, input, limit, notes)
-    : await suggestionsSearch(resolved, input, limit, notes);
+    ? await foodFilterSearch(resolved, input, limit, primaryNotes)
+    : await suggestionsSearch(resolved, input, limit, primaryNotes);
 
   if (recipes.length > 0) {
+    notes.push(...primaryNotes);
     return {
       resolvedIngredients: resolved,
       unresolvedIngredients: unresolved,
