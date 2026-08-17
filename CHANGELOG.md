@@ -1,3 +1,10 @@
+# [1.5.0](https://github.com/timo-reymann/mealie-mcp-server/compare/v1.4.1...v1.5.0) (2026-08-17)
+
+
+### Features
+
+* assign categories and tags to existing recipes ([#5](https://github.com/timo-reymann/mealie-mcp-server/issues/5)) ([c719148](https://github.com/timo-reymann/mealie-mcp-server/commit/c719148cef15d9c87b8d5607c50f57ff02f98062))
+
 ## [1.4.1](https://github.com/timo-reymann/mealie-mcp-server/compare/v1.4.0...v1.4.1) (2026-08-16)
 
 
