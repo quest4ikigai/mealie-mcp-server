@@ -17,9 +17,13 @@ export interface UpdateFoodInput {
 }
 
 // Fields Mealie's PUT /api/foods/{id} accepts (the CreateIngredientFood shape). The GET
-// response additionally includes response-only fields (id, label, createdAt, updatedAt)
-// that must not be echoed back in an update payload.
+// response additionally includes response-only fields (label, createdAt, updatedAt) that
+// must not be echoed back in an update payload. `id` IS part of CreateIngredientFood
+// (inherited from UnitFoodBase) despite being response-only on other resources — omitting
+// it makes Mealie default it to null and write that into the id column on PUT, so it must
+// always be carried forward from the existing record.
 const UPDATABLE_FOOD_FIELDS = [
+  'id',
   'name',
   'pluralName',
   'description',
