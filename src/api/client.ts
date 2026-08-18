@@ -64,6 +64,25 @@ export function apiGet<T>(path: string, params?: Record<string, string>): Promis
   return request<T>(url);
 }
 
+// Mealie's FastAPI list query params (e.g. `categories: list[UUID4 | str]`) require repeated keys
+// (?categories=a&categories=b), not a single comma-joined value — unlike formatParams above, which
+// comma-joins and works for endpoints that accept it. Use this for endpoints where a multi-value
+// array param must reach Mealie as repeated keys.
+export function buildQueryString(
+  params: Record<string, string | number | boolean | string[] | undefined | null>,
+): string {
+  const usp = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined || value === null) continue;
+    if (Array.isArray(value)) {
+      for (const item of value) usp.append(key, item);
+    } else {
+      usp.append(key, String(value));
+    }
+  }
+  return usp.toString();
+}
+
 export function apiPost<T>(path: string, body?: unknown): Promise<T> {
   return request<T>(path, {
     method: 'POST',

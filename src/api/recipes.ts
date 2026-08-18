@@ -1,4 +1,4 @@
-import { apiGet, apiPost, apiPatch, apiPut, apiDelete, formatParams, PaginatedResult } from './client.js';
+import { apiGet, apiPost, apiPatch, apiPut, apiDelete, buildQueryString, PaginatedResult } from './client.js';
 import { mapWithConcurrency, DEFAULT_DETAIL_FETCH_CONCURRENCY } from '../lib/concurrency.js';
 
 export async function getRecipes(
@@ -14,10 +14,8 @@ export async function getRecipes(
     requireAllCategories?: boolean;
   },
 ): Promise<PaginatedResult<Record<string, unknown>>> {
-  return apiGet(
-    '/api/recipes',
-    params ? formatParams(params as Record<string, string | number | boolean | string[] | undefined | null>) : undefined,
-  );
+  const qs = params ? buildQueryString(params) : '';
+  return apiGet(`/api/recipes${qs ? `?${qs}` : ''}`);
 }
 
 export async function getRecipe(slug: string): Promise<Record<string, unknown>> {
