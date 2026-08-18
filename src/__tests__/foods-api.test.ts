@@ -186,6 +186,7 @@ describe('updateFood', () => {
 
     expect(mockGet).toHaveBeenCalledWith('/api/foods/food-1');
     expect(mockPut).toHaveBeenCalledWith('/api/foods/food-1', {
+      id: 'food-1',
       name: 'Yellow Onion',
       pluralName: 'Onions',
       description: 'A pungent bulb vegetable',
@@ -194,6 +195,49 @@ describe('updateFood', () => {
       aliases: [{ name: 'yellow onion' }],
       householdsWithIngredientFood: ['household-1'],
     });
+  });
+
+  it('sends a partial description update with id, name, and aliases unchanged', async () => {
+    mockGet.mockResolvedValue(existingFood());
+    mockPut.mockResolvedValue(existingFood({ description: 'Updated description' }));
+
+    const result = await updateFood('food-1', { description: 'Updated description' });
+
+    const [, body] = mockPut.mock.calls[0] as [string, Record<string, unknown>];
+    expect(body).toMatchObject({
+      id: 'food-1',
+      name: 'Onion',
+      description: 'Updated description',
+      aliases: [{ name: 'yellow onion' }],
+    });
+    expect(result).toEqual(existingFood({ description: 'Updated description' }));
+  });
+
+  it('updates only the name, leaving id and every other field intact', async () => {
+    mockGet.mockResolvedValue(existingFood());
+    mockPut.mockResolvedValue(existingFood({ name: 'Yellow Onion' }));
+
+    await updateFood('food-1', { name: 'Yellow Onion' });
+
+    const [, body] = mockPut.mock.calls[0] as [string, Record<string, unknown>];
+    expect(body).toEqual({
+      id: 'food-1',
+      name: 'Yellow Onion',
+      pluralName: 'Onions',
+      description: 'A pungent bulb vegetable',
+      extras: {},
+      labelId: 'label-1',
+      aliases: [{ name: 'yellow onion' }],
+      householdsWithIngredientFood: ['household-1'],
+    });
+  });
+
+  it('replaces the label when a valid new labelId is provided', async () => {
+    mockGet.mockResolvedValue(existingFood());
+    mockPut.mockResolvedValue(existingFood({ labelId: 'label-2' }));
+    await updateFood('food-1', { labelId: 'label-2' });
+    const [, body] = mockPut.mock.calls[0] as [string, Record<string, unknown>];
+    expect(body).toMatchObject({ id: 'food-1', labelId: 'label-2' });
   });
 
   it('updates pluralName while preserving other fields', async () => {
@@ -269,15 +313,26 @@ describe('updateFood', () => {
     expect(body).toMatchObject({ labelId: null });
   });
 
-  it('strips response-only fields (id, label, createdAt, updatedAt) from the outgoing payload', async () => {
+  it('preserves the existing id while stripping response-only fields (label, createdAt, updatedAt)', async () => {
     mockGet.mockResolvedValue(existingFood());
     mockPut.mockResolvedValue(existingFood());
     await updateFood('food-1', { description: 'New description' });
     const [, body] = mockPut.mock.calls[0] as [string, Record<string, unknown>];
-    expect(body).not.toHaveProperty('id');
+    expect(body.id).toBe('food-1');
     expect(body).not.toHaveProperty('label');
     expect(body).not.toHaveProperty('createdAt');
     expect(body).not.toHaveProperty('updatedAt');
+  });
+
+  it('regression: never sends a null id, and always sends the existing food id instead', async () => {
+    mockGet.mockResolvedValue(existingFood());
+    mockPut.mockResolvedValue(existingFood());
+
+    await updateFood('food-1', { description: 'New description' });
+
+    const [, body] = mockPut.mock.calls[0] as [string, Record<string, unknown>];
+    expect(body.id).not.toBeNull();
+    expect(body.id).toBe('food-1');
   });
 
   it('propagates an error fetching the existing record', async () => {
