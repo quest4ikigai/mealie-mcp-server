@@ -7,7 +7,8 @@
 | Categories | 7 |
 | Tags | 7 |
 | Shopping Lists | 13 |
-| **Total** | **47** |
+| Foods | 5 |
+| **Total** | **52** |
 
 ## Recipe Operations (15)
 
@@ -48,3 +49,11 @@
 - `get_shopping_lists`, `create_shopping_list`, `get_shopping_list`, `update_shopping_list`, `delete_shopping_list`
 - `add_recipe_to_shopping_list`, `remove_recipe_from_shopping_list`
 - `get_shopping_list_items`, `create_shopping_list_item`, `create_shopping_list_items_bulk`, `update_shopping_list_item`, `delete_shopping_list_item`, `delete_shopping_list_items_bulk`
+
+## Food Operations (5)
+
+- `get_foods` — `GET /api/foods` (paginated, search matches name/aliases per Mealie's behavior)
+- `get_food` — `GET /api/foods/{foodId}`
+- `create_food` — `POST /api/foods`; converts `aliases: string[]` to Mealie's `{ name }[]` alias shape
+- `update_food` — `GET /api/foods/{foodId}` to fetch the current record, merged with the requested changes (Mealie's `PUT` is a full replace of the create-shape fields), then `PUT /api/foods/{foodId}`; response-only fields (`id`, `label`, `createdAt`, `updatedAt`) are stripped before the `PUT`
+- `delete_food` — `DELETE /api/foods/{foodId}`
