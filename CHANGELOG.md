@@ -1,3 +1,10 @@
+# [1.6.0](https://github.com/timo-reymann/mealie-mcp-server/compare/v1.5.3...v1.6.0) (2026-08-18)
+
+
+### Features
+
+* add find_recipes_for_ingredients tool ([#8](https://github.com/timo-reymann/mealie-mcp-server/issues/8)) ([06135d6](https://github.com/timo-reymann/mealie-mcp-server/commit/06135d6536520980d4c1809da30f5ab11af442bd)), closes [#9](https://github.com/timo-reymann/mealie-mcp-server/issues/9)
+
 ## [1.5.3](https://github.com/timo-reymann/mealie-mcp-server/compare/v1.5.2...v1.5.3) (2026-08-18)
 
 
