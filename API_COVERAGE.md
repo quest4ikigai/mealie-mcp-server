@@ -2,15 +2,15 @@
 
 | Category | Tools |
 |---|---|
-| Recipes | 13 |
+| Recipes | 14 |
 | Meal Plans | 5 |
 | Categories | 7 |
 | Tags | 7 |
 | Shopping Lists | 13 |
 | Foods | 5 |
-| **Total** | **50** |
+| **Total** | **51** |
 
-## Recipe Operations (13)
+## Recipe Operations (14)
 
 - `get_recipes` — `GET /api/recipes` (paginated, search, filter by tags/categories). `categories`/`tags` are resolved by name, slug, or ID (case-insensitive) against `GET /api/organizers/categories`/`GET /api/organizers/tags` before the request, since Mealie's own query params only match by exact slug/ID and silently skip the filter (returning the unfiltered library) when a name doesn't match — unresolved values fail the call clearly instead.
 - `get_recipe_detailed` — `GET /api/recipes/{slug}` (full details)
@@ -19,6 +19,7 @@
 - `get_recipes_detailed_batch` — Same as `get_recipes_batch` (full details including nutrition), also bounded to 4 concurrent requests
 - `create_recipe` — `POST /api/recipes` + optional `PUT` for ingredients/instructions
 - `patch_recipe` — `PATCH /api/recipes/{slug}` (partial update). Also accepts optional `categories`/`tags`/`taxonomyMode`/`createMissing`; when present, `GET /api/recipes/{slug}` is used to resolve current categories/tags for merge mode and the resolved `recipeCategory`/`tags` collections are folded into the same `PATCH` call as the other fields.
+- `update_recipe_ingredients` — `GET /api/recipes/{slug}` to fetch the complete current recipe, then `PUT /api/recipes/{slug}` with every field echoed back unchanged except `recipeIngredient`, which is replaced wholesale with the supplied list. `foodId`/`unitId` + `foodName`/`unitName` pairs are transformed into the minimal `{id, name}` object shape Mealie's embedded `food`/`unit` fields expect; this tool never resolves or creates foods/units itself.
 - `update_recipe_taxonomy` — Composite: `GET /api/recipes/{slug}` to read current categories/tags (and to resolve requested names/slugs/IDs against `GET /api/organizers/categories`/`GET /api/organizers/tags`, optionally `POST`-creating missing ones), then a single `PATCH /api/recipes/{slug}` with only the changed `recipeCategory`/`tags` fields
 - `update_recipe_taxonomy_batch` — Runs `update_recipe_taxonomy` for multiple recipes with bounded concurrency (5 at a time), returning a success/error result per recipe
 - `duplicate_recipe` — `POST /api/recipes/{slug}/duplicate`
