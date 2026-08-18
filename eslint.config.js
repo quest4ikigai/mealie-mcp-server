@@ -12,7 +12,7 @@ export default tseslint.config(
           // The test suite has grown past typescript-eslint's default safety threshold (8) for
           // files matched by allowDefaultProject; raise it rather than fight it as more test
           // files land.
-          maximumDefaultProjectFileMatchCount_THIS_WILL_SLOW_DOWN_LINTING: 30,
+          maximumDefaultProjectFileMatchCount_THIS_WILL_SLOW_DOWN_LINTING: 40,
         },
         tsconfigRootDir: import.meta.dirname,
       },
