@@ -1,3 +1,10 @@
+## [1.5.3](https://github.com/timo-reymann/mealie-mcp-server/compare/v1.5.2...v1.5.3) (2026-08-18)
+
+
+### Bug Fixes
+
+* get_recipes silently ignoring non-slug category/tag filters ([#9](https://github.com/timo-reymann/mealie-mcp-server/issues/9)) ([4e111df](https://github.com/timo-reymann/mealie-mcp-server/commit/4e111df944590f6e102bb5876b8e1ddc0503610d))
+
 ## [1.5.2](https://github.com/timo-reymann/mealie-mcp-server/compare/v1.5.1...v1.5.2) (2026-08-18)
 
 
