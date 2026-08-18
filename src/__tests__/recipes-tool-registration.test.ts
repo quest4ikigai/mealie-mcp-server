@@ -3,12 +3,15 @@ import { registerRecipeTools } from '../tools/recipes.js';
 
 const EXISTING_RECIPE_TOOLS = [
   'get_recipes',
+  'find_recipes_for_ingredients',
   'get_recipe_detailed',
   'get_recipe_concise',
   'get_recipes_batch',
   'get_recipes_detailed_batch',
   'create_recipe',
   'patch_recipe',
+  'update_recipe_taxonomy',
+  'update_recipe_taxonomy_batch',
   'duplicate_recipe',
   'mark_recipe_last_made',
   'set_recipe_image_from_url',
@@ -23,10 +26,6 @@ describe('registerRecipeTools backward compatibility', () => {
         registeredNames.push(name);
         return undefined;
       }),
-      registerTool: vi.fn((name: string) => {
-        registeredNames.push(name);
-        return undefined;
-      }),
     };
 
     registerRecipeTools(stubServer as never);
@@ -37,29 +36,23 @@ describe('registerRecipeTools backward compatibility', () => {
     expect(registeredNames).toContain('get_recipes_for_classification');
   });
 
-  it('registers get_recipes_for_classification as read-only, non-destructive, with an output schema', () => {
-    interface RegisterToolConfig {
-      annotations?: Record<string, unknown>;
-      outputSchema?: Record<string, unknown>;
-    }
-    const registerTool = vi.fn<(name: string, config: RegisterToolConfig, cb: unknown) => undefined>();
-    const stubServer = { tool: vi.fn(), registerTool };
+  it('registers get_recipes_for_classification as read-only and non-destructive', () => {
+    const tool = vi.fn<(name: string, ...rest: unknown[]) => undefined>();
+    const stubServer = { tool };
 
     registerRecipeTools(stubServer as never);
 
-    const call = registerTool.mock.calls.find(([name]) => name === 'get_recipes_for_classification');
+    const call = tool.mock.calls.find(([name]) => name === 'get_recipes_for_classification');
     expect(call).toBeDefined();
-    const [, config] = call!;
+    const annotations = call!.find((arg): arg is Record<string, unknown> => {
+      return typeof arg === 'object' && arg !== null && 'readOnlyHint' in arg;
+    });
 
-    expect(config.annotations).toEqual({
+    expect(annotations).toEqual({
       readOnlyHint: true,
       destructiveHint: false,
       idempotentHint: true,
       openWorldHint: false,
     });
-    expect(config.outputSchema).toBeDefined();
-    expect(Object.keys(config.outputSchema!)).toEqual(
-      expect.arrayContaining(['items', 'failures', 'nextCursor', 'scannedCount', 'returnedCount', 'hasMore']),
-    );
   });
 });

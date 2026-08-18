@@ -31,11 +31,6 @@ function createMockServer(): { server: McpServer; handlers: Map<string, ToolHand
       handlers.set(name, cb);
       return {};
     },
-    registerTool: (name: string, ...rest: unknown[]) => {
-      const cb = rest[rest.length - 1] as ToolHandler;
-      handlers.set(name, cb);
-      return {};
-    },
   };
   return { server: server as unknown as McpServer, handlers };
 }
