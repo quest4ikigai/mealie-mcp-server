@@ -1,4 +1,4 @@
-import { apiGet, apiPost, apiPatch, apiPut, apiDelete, formatParams, buildQueryString, PaginatedResult } from './client.js';
+import { apiGet, apiPost, apiPatch, apiPut, apiDelete, buildQueryString, PaginatedResult } from './client.js';
 import { mapWithConcurrency, DEFAULT_DETAIL_FETCH_CONCURRENCY } from '../lib/concurrency.js';
 
 export async function getRecipes(
