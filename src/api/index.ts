@@ -3,5 +3,5 @@ export * from './recipes.js';
 export * from './mealplans.js';
 export * from './categories.js';
 export * from './tags.js';
-export * from './shopping-lists.js';
 export * from './foods.js';
+export * from './shopping-lists.js';
