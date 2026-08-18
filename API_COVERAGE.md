@@ -14,8 +14,8 @@
 - `get_recipes` — `GET /api/recipes` (paginated, search, filter by tags/categories)
 - `get_recipe_detailed` — `GET /api/recipes/{slug}` (full details)
 - `get_recipe_concise` — `GET /api/recipes/{slug}` (filtered to summary fields)
-- `get_recipes_batch` — Concurrent `GET /api/recipes/{slug}` for multiple slugs via `Promise.allSettled`
-- `get_recipes_detailed_batch` — Concurrent `GET /api/recipes/{slug}` for multiple slugs (full details including nutrition)
+- `get_recipes_batch` — `GET /api/recipes/{slug}` for multiple slugs, with bounded concurrency (4 in flight at a time) rather than firing every request at once
+- `get_recipes_detailed_batch` — Same as `get_recipes_batch` (full details including nutrition), also bounded to 4 concurrent requests
 - `create_recipe` — `POST /api/recipes` + optional `PUT` for ingredients/instructions
 - `patch_recipe` — `PATCH /api/recipes/{slug}` (partial update). Also accepts optional `categories`/`tags`/`taxonomyMode`/`createMissing`; when present, `GET /api/recipes/{slug}` is used to resolve current categories/tags for merge mode and the resolved `recipeCategory`/`tags` collections are folded into the same `PATCH` call as the other fields.
 - `update_recipe_taxonomy` — Composite: `GET /api/recipes/{slug}` to read current categories/tags (and to resolve requested names/slugs/IDs against `GET /api/organizers/categories`/`GET /api/organizers/tags`, optionally `POST`-creating missing ones), then a single `PATCH /api/recipes/{slug}` with only the changed `recipeCategory`/`tags` fields
@@ -28,7 +28,7 @@
 ## Meal Plan Operations (5)
 
 - `get_all_mealplans` — `GET /api/households/mealplans`
-- `get_mealplan_with_recipes` — Composite: `GET /api/households/mealplans` + batch `GET /api/recipes/{slug}` with client-side date filtering
+- `get_mealplan_with_recipes` — Composite: `GET /api/households/mealplans` + batch `GET /api/recipes/{slug}` (bounded concurrency) with client-side date filtering
 - `create_mealplan` — `POST /api/households/mealplans`
 - `create_mealplan_bulk` — Multiple `POST /api/households/mealplans` via `Promise.all`
 - `get_todays_mealplan` — `GET /api/households/mealplans/today`

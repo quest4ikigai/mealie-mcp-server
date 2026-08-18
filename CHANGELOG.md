@@ -1,3 +1,10 @@
+## [1.5.1](https://github.com/timo-reymann/mealie-mcp-server/compare/v1.5.0...v1.5.1) (2026-08-18)
+
+
+### Bug Fixes
+
+* getRecipesBatch firing every request at once causes gateway timeouts ([#10](https://github.com/timo-reymann/mealie-mcp-server/issues/10)) ([d9fc185](https://github.com/timo-reymann/mealie-mcp-server/commit/d9fc185fbd6894256b6b53956f1f2db6c5d16dd0))
+
 # [1.5.0](https://github.com/timo-reymann/mealie-mcp-server/compare/v1.4.1...v1.5.0) (2026-08-17)
 
 
