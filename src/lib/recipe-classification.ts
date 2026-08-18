@@ -72,9 +72,7 @@ export interface GetRecipesForClassificationInput {
 
 export class InvalidLimitError extends Error {
   constructor(limit: unknown) {
-    super(
-      `Invalid limit ${JSON.stringify(limit)}: must be an integer between 1 and ${CLASSIFICATION_MAX_LIMIT}.`,
-    );
+    super(`limit must be between 1 and ${CLASSIFICATION_MAX_LIMIT} (got ${JSON.stringify(limit)}).`);
     this.name = 'InvalidLimitError';
   }
 }

@@ -205,51 +205,100 @@ export function registerRecipeTools(server: McpServer) {
     },
   );
 
-  server.tool(
+  const classificationTaxonomyItemSchema = z.object({
+    id: z.string(),
+    name: z.string(),
+    slug: z.string(),
+  });
+
+  server.registerTool(
     'get_recipes_for_classification',
-    'Compact, paginated, READ-ONLY feed of recipes for assigning Categories and Tags. Returns only the ' +
-      'fields useful for classification (name, description, times, servings, source URL, ingredients, ' +
-      'instructions) plus each recipe\'s EXISTING categories and tags — include and preserve those when ' +
-      'classifying; do not drop or overwrite them. By default only recipes missing at least one taxonomy ' +
-      'collection are returned (taxonomyState "missing_either"); use "missing_both", "missing_categories", ' +
-      '"missing_tags", or "any" to change that. Pass the response\'s nextCursor back unchanged as the next ' +
-      'call\'s cursor to continue; stop once hasMore is false. Pagination is stable against concurrent ' +
-      'taxonomy edits — a recipe that gains categories/tags between calls will not cause other recipes to be ' +
-      'skipped. A failure reading one recipe is reported in failures and does not fail the rest of the page. ' +
-      'This tool never creates or modifies anything — it does not assign taxonomy, create categories/tags, or ' +
-      'change any recipe. To apply classifications, call update_recipe_taxonomy_batch separately (preferably ' +
-      'in batches of about five recipes), normally with mode "merge" and createMissing: false unless the user ' +
-      'explicitly asks to replace collections or auto-create new categories/tags.',
     {
-      cursor: z
-        .string()
-        .optional()
-        .describe(
-          'Opaque continuation token from a previous call\'s nextCursor. Pass it back unchanged to resume ' +
-            'exactly where that call left off; omit it to start from the beginning of the collection. Do not ' +
-            'construct or edit this value — malformed or foreign cursors are rejected with a clear error.',
+      description:
+        'Compact, paginated, READ-ONLY feed of recipes for assigning Categories and Tags. Returns only the ' +
+        'fields useful for classification (name, description, times, servings, source URL, ingredients, ' +
+        'instructions) plus each recipe\'s EXISTING categories and tags — include and preserve those when ' +
+        'classifying; do not drop or overwrite them. By default only recipes missing at least one taxonomy ' +
+        'collection are returned (taxonomyState "missing_either"); use "missing_both", "missing_categories", ' +
+        '"missing_tags", or "any" to change that. Pass the response\'s nextCursor back unchanged as the next ' +
+        'call\'s cursor to continue; stop once hasMore is false. Pagination is stable against concurrent ' +
+        'taxonomy edits — a recipe that gains categories/tags between calls will not cause other recipes to be ' +
+        'skipped. A failure reading one recipe is reported in failures and does not fail the rest of the page. ' +
+        'This tool never creates or modifies anything — it does not assign taxonomy, create categories/tags, or ' +
+        'change any recipe. To apply classifications, call update_recipe_taxonomy_batch separately (preferably ' +
+        'in batches of about five recipes), normally with mode "merge" and createMissing: false unless the user ' +
+        'explicitly asks to replace collections or auto-create new categories/tags.',
+      inputSchema: {
+        cursor: z
+          .string()
+          .optional()
+          .describe(
+            'Opaque continuation token from a previous call\'s nextCursor. Pass it back unchanged to resume ' +
+              'exactly where that call left off; omit it to start from the beginning of the collection. Do not ' +
+              'construct or edit this value — malformed or foreign cursors are rejected with a clear error.',
+          ),
+        limit: z
+          .number()
+          .int(`limit must be between 1 and ${CLASSIFICATION_MAX_LIMIT}.`)
+          .min(1, `limit must be between 1 and ${CLASSIFICATION_MAX_LIMIT}.`)
+          .max(CLASSIFICATION_MAX_LIMIT, `limit must be between 1 and ${CLASSIFICATION_MAX_LIMIT}.`)
+          .optional()
+          .describe(`Maximum recipes to return (1-${CLASSIFICATION_MAX_LIMIT}, default ${CLASSIFICATION_DEFAULT_LIMIT}).`),
+        taxonomyState: z
+          .enum(['missing_either', 'missing_both', 'missing_categories', 'missing_tags', 'any'])
+          .optional()
+          .describe(
+            `Which recipes to include, based on their existing Categories/Tags (default "${CLASSIFICATION_DEFAULT_TAXONOMY_STATE}"): ` +
+              '"missing_either" — category list empty, tag list empty, or both; "missing_both" — both empty; ' +
+              '"missing_categories" — category list empty regardless of tags; "missing_tags" — tag list empty ' +
+              'regardless of categories; "any" — no taxonomy filtering.',
+          ),
+      },
+      outputSchema: {
+        items: z.array(
+          z.object({
+            id: z.string(),
+            slug: z.string(),
+            name: z.string(),
+            description: z.string().nullable(),
+            totalTime: z.string().nullable(),
+            prepTime: z.string().nullable(),
+            cookTime: z.string().nullable(),
+            servings: z.number().nullable(),
+            yield: z.string().nullable(),
+            sourceUrl: z.string().nullable(),
+            ingredients: z.array(z.string()),
+            instructions: z.array(z.string()),
+            categories: z.array(classificationTaxonomyItemSchema),
+            tags: z.array(classificationTaxonomyItemSchema),
+          }),
         ),
-      limit: z
-        .number()
-        .int('limit must be an integer.')
-        .min(1, 'limit must be at least 1.')
-        .max(CLASSIFICATION_MAX_LIMIT, `limit must be at most ${CLASSIFICATION_MAX_LIMIT}.`)
-        .optional()
-        .describe(`Maximum recipes to return (1-${CLASSIFICATION_MAX_LIMIT}, default ${CLASSIFICATION_DEFAULT_LIMIT}).`),
-      taxonomyState: z
-        .enum(['missing_either', 'missing_both', 'missing_categories', 'missing_tags', 'any'])
-        .optional()
-        .describe(
-          `Which recipes to include, based on their existing Categories/Tags (default "${CLASSIFICATION_DEFAULT_TAXONOMY_STATE}"): ` +
-            '"missing_either" — category list empty, tag list empty, or both; "missing_both" — both empty; ' +
-            '"missing_categories" — category list empty regardless of tags; "missing_tags" — tag list empty ' +
-            'regardless of categories; "any" — no taxonomy filtering.',
+        failures: z.array(
+          z.object({
+            slug: z.string().optional(),
+            id: z.string().optional(),
+            error: z.string(),
+          }),
         ),
+        nextCursor: z.string().nullable(),
+        scannedCount: z.number(),
+        returnedCount: z.number(),
+        hasMore: z.boolean(),
+      },
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
     },
     async ({ cursor, limit, taxonomyState }) => {
       try {
         const result = await getRecipesForClassification({ cursor, limit, taxonomyState });
-        return successResponse(result);
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+          structuredContent: result as unknown as Record<string, unknown>,
+        };
       } catch (error) {
         return errorResponse(error);
       }
