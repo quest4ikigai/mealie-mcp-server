@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import * as recipesApi from '../api/recipes.js';
 import { buildTaxonomyPatch, updateRecipeTaxonomy, updateRecipeTaxonomyBatch } from '../lib/recipe-taxonomy.js';
+import { resolveTaxonomyFilter } from '../lib/taxonomy-resolution.js';
 
 const taxonomyModeSchema = z
   .enum(['merge', 'replace'])
@@ -68,14 +69,22 @@ export function registerRecipeTools(server: McpServer) {
       search: z.string().optional(),
       page: z.number().optional(),
       perPage: z.number().optional(),
-      categories: z.array(z.string()).optional(),
-      tags: z.array(z.string()).optional(),
+      categories: z
+        .array(z.string())
+        .optional()
+        .describe('Each given as a name, slug, or ID (matched case-insensitively by name/slug).'),
+      tags: z
+        .array(z.string())
+        .optional()
+        .describe('Each given as a name, slug, or ID (matched case-insensitively by name/slug).'),
       requireAllTags: z.boolean().optional(),
       requireAllCategories: z.boolean().optional(),
     },
     async (params) => {
       try {
-        const result = await recipesApi.getRecipes(params);
+        const categories = await resolveTaxonomyFilter('category', params.categories);
+        const tags = await resolveTaxonomyFilter('tag', params.tags);
+        const result = await recipesApi.getRecipes({ ...params, categories, tags });
         return successResponse(result);
       } catch (error) {
         return errorResponse(error);
