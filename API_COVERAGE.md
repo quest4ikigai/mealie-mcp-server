@@ -55,5 +55,5 @@
 - `get_foods` — `GET /api/foods` (paginated, search matches name/aliases per Mealie's behavior)
 - `get_food` — `GET /api/foods/{foodId}`
 - `create_food` — `POST /api/foods`; converts `aliases: string[]` to Mealie's `{ name }[]` alias shape
-- `update_food` — `GET /api/foods/{foodId}` to fetch the current record, merged with the requested changes (Mealie's `PUT` is a full replace of the create-shape fields), then `PUT /api/foods/{foodId}`; response-only fields (`id`, `label`, `createdAt`, `updatedAt`) are stripped before the `PUT`
+- `update_food` — `GET /api/foods/{foodId}` to fetch the current record, merged with the requested changes (Mealie's `PUT` is a full replace of the create-shape fields), then `PUT /api/foods/{foodId}`; the existing `id` is always echoed back (Mealie's update schema includes it and defaults to `null` if omitted, which Mealie then writes into the row), while response-only fields (`label`, `createdAt`, `updatedAt`) are stripped before the `PUT`
 - `delete_food` — `DELETE /api/foods/{foodId}`
