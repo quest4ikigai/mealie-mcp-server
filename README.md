@@ -5,7 +5,7 @@ mealie-mcp-server
 [![GitHub Release](https://img.shields.io/github/v/tag/timo-reymann/mealie-mcp-server?label=version)](https://github.com/timo-reymann/mealie-mcp-server/releases)
 [![Renovate](https://img.shields.io/badge/renovate-enabled-green?logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzNjkgMzY5Ij48Y2lyY2xlIGN4PSIxODkuOSIgY3k9IjE5MC4yIiByPSIxODQuNSIgZmlsbD0iI2ZmZTQyZSIgdHJhbnNmb3JtPSJ0cmFuc2xhdGUoLTUgLTYpIi8+PHBhdGggZmlsbD0iIzhiYjViNSIgZD0iTTI1MSAyNTZsLTM4LTM4YTE3IDE3IDAgMDEwLTI0bDU2LTU2YzItMiAyLTYgMC03bC0yMC0yMWE1IDUgMCAwMC03IDBsLTEzIDEyLTktOCAxMy0xM2ExNyAxNyAwIDAxMjQgMGwyMSAyMWM3IDcgNyAxNyAwIDI0bC01NiA1N2E1IDUgMCAwMDAgN2wzOCAzOHoiLz48cGF0aCBmaWxsPSIjZDk1NjEyIiBkPSJNMzAwIDI4OGwtOCA4Yy00IDQtMTEgNC0xNiAwbC00Ni00NmMtNS01LTUtMTIgMC0xNmw4LThjNC00IDExLTQgMTUgMGw0NyA0N2M0IDQgNCAxMSAwIDE1eiIvPjxwYXRoIGZpbGw9IiMyNGJmYmUiIGQ9Ik04MSAxODVsMTgtMTggMTggMTgtMTggMTh6Ii8+PHBhdGggZmlsbD0iIzI1YzRjMyIgZD0iTTIyMCAxMDBsMjMgMjNjNCA0IDQgMTEgMCAxNkwxNDIgMjQwYy00IDQtMTEgNC0xNSAwbC0yNC0yNGMtNC00LTQtMTEgMC0xNWwxMDEtMTAxYzUtNSAxMi01IDE2IDB6Ii8+PHBhdGggZmlsbD0iIzFkZGVkZCIgZD0iTTk5IDE2N2wxOC0xOCAxOCAxOC0xOCAxOHoiLz48cGF0aCBmaWxsPSIjMDBhZmIzIiBkPSJNMjMwIDExMGwxMyAxM2M0IDQgNCAxMSAwIDE2TDE0MiAyNDBjLTQgNC0xMSA0LTE1IDBsLTEzLTEzYzQgNCAxMSA0IDE1IDBsMTAxLTEwMWM1LTUgNS0xMSAwLTE2eiIvPjxwYXRoIGZpbGw9IiMyNGJmYmUiIGQ9Ik0xMTYgMTQ5bDE4LTE4IDE4IDE4LTE4IDE4eiIvPjxwYXRoIGZpbGw9IiMxZGRlZGQiIGQ9Ik0xMzQgMTMxbDE4LTE4IDE4IDE4LTE4IDE4eiIvPjxwYXRoIGZpbGw9IiMxYmNmY2UiIGQ9Ik0xNTIgMTEzbDE4LTE4IDE4IDE4LTE4IDE4eiIvPjxwYXRoIGZpbGw9IiMyNGJmYmUiIGQ9Ik0xNzAgOTVsMTgtMTggMTggMTgtMTggMTh6Ii8+PHBhdGggZmlsbD0iIzFiY2ZjZSIgZD0iTTYzIDE2N2wxOC0xOCAxOCAxOC0xOCAxOHpNOTggMTMxbDE4LTE4IDE4IDE4LTE4IDE4eiIvPjxwYXRoIGZpbGw9IiMzNGVkZWIiIGQ9Ik0xMzQgOTVsMTgtMTggMTggMTgtMTggMTh6Ii8+PHBhdGggZmlsbD0iIzFiY2ZjZSIgZD0iTTE1MyA3OGwxOC0xOCAxOCAxOC0xOCAxOHoiLz48cGF0aCBmaWxsPSIjMzRlZGViIiBkPSJNODAgMTEzbDE4LTE3IDE4IDE3LTE4IDE4ek0xMzUgNjBsMTgtMTggMTggMTgtMTggMTh6Ii8+PHBhdGggZmlsbD0iIzk4ZWRlYiIgZD0iTTI3IDEzMWwxOC0xOCAxOCAxOC0xOCAxOHoiLz48cGF0aCBmaWxsPSIjYjUzZTAyIiBkPSJNMjg1IDI1OGw3IDdjNCA0IDQgMTEgMCAxNWwtOCA4Yy00IDQtMTEgNC0xNiAwbC02LTdjNCA1IDExIDUgMTUgMGw4LTdjNC01IDQtMTIgMC0xNnoiLz48cGF0aCBmaWxsPSIjOThlZGViIiBkPSJNODEgNzhsMTgtMTggMTggMTgtMTggMTh6Ii8+PHBhdGggZmlsbD0iIzAwYTNhMiIgZD0iTTIzNSAxMTVsOCA4YzQgNCA0IDExIDAgMTZMMTQyIDI0MGMtNCA0LTExIDQtMTUgMGwtOS05YzUgNSAxMiA1IDE2IDBsMTAxLTEwMWM0LTQgNC0xMSAwLTE1eiIvPjxwYXRoIGZpbGw9IiMzOWQ5ZDgiIGQ9Ik0yMjggMTA4bC04LThjLTQtNS0xMS01LTE2IDBMMTAzIDIwMWMtNCA0LTQgMTEgMCAxNWw4IDhjLTQtNC00LTExIDAtMTVsMTAxLTEwMWM1LTQgMTItNCAxNiAweiIvPjxwYXRoIGZpbGw9IiNhMzM5MDQiIGQ9Ik0yOTEgMjY0bDggOGM0IDQgNCAxMSAwIDE2bC04IDdjLTQgNS0xMSA1LTE1IDBsLTktOGM1IDUgMTIgNSAxNiAwbDgtOGM0LTQgNC0xMSAwLTE1eiIvPjxwYXRoIGZpbGw9IiNlYjZlMmQiIGQ9Ik0yNjAgMjMzbC00LTRjLTYtNi0xNy02LTIzIDAtNyA3LTcgMTcgMCAyNGw0IDRjLTQtNS00LTExIDAtMTZsOC04YzQtNCAxMS00IDE1IDB6Ii8+PHBhdGggZmlsbD0iIzEzYWNiZCIgZD0iTTEzNCAyNDhjLTQgMC04LTItMTEtNWwtMjMtMjNhMTYgMTYgMCAwMTAtMjNMMjAxIDk2YTE2IDE2IDAgMDEyMiAwbDI0IDI0YzYgNiA2IDE2IDAgMjJMMTQ2IDI0M2MtMyAzLTcgNS0xMiA1em03OC0xNDdsLTQgMi0xMDEgMTAxYTYgNiAwIDAwMCA5bDIzIDIzYTYgNiAwIDAwOSAwbDEwMS0xMDFhNiA2IDAgMDAwLTlsLTI0LTIzLTQtMnoiLz48cGF0aCBmaWxsPSIjYmY0NDA0IiBkPSJNMjg0IDMwNGMtNCAwLTgtMS0xMS00bC00Ny00N2MtNi02LTYtMTYgMC0yMmw4LThjNi02IDE2LTYgMjIgMGw0NyA0NmM2IDcgNiAxNyAwIDIzbC04IDhjLTMgMy03IDQtMTEgNHptLTM5LTc2Yy0xIDAtMyAwLTQgMmwtOCA3Yy0yIDMtMiA3IDAgOWw0NyA0N2E2IDYgMCAwMDkgMGw3LThjMy0yIDMtNiAwLTlsLTQ2LTQ2Yy0yLTItMy0yLTUtMnoiLz48L3N2Zz4=)](https://renovatebot.com)
 
-A [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server for [Mealie](https://github.com/mealie-recipes/mealie) recipe management. Exposes 46 tools and 1 prompt for AI assistants to search, create, and manage recipes, meal plans, shopping lists, categories, and tags.
+A [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server for [Mealie](https://github.com/mealie-recipes/mealie) recipe management. Exposes 47 tools and 1 prompt for AI assistants to search, create, and manage recipes, meal plans, shopping lists, categories, and tags.
 
 <p align="center">
     <img src="https://raw.githubusercontent.com/timo-reymann/mealie-mcp-server/main/.github/images/logo.png" alt="Logo" />
@@ -22,6 +22,7 @@ A [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server for [Me
 - **Shopping Lists** — Full CRUD for lists and items, bulk operations, and recipe-to-list integration.
 - **Categories & Tags** — Full CRUD for organizing recipes, including empty-category/tag detection.
 - **Batch & Composite Tools** — `get_recipes_batch` and `get_recipes_detailed_batch` for bounded-concurrency recipe lookup, `get_mealplan_with_recipes` for meal plans with embedded recipe data and client-side date filtering, `update_recipe_taxonomy_batch` for bounded-concurrency category/tag updates across many recipes.
+- **Recipe Classification Feed** — `get_recipes_for_classification` is a compact, paginated, read-only feed purpose-built for AI-driven Category/Tag assignment. It avoids the timeouts that batch/detail tools can hit on large recipe sets by filtering with the cheap list endpoint, fetching full detail only for matches with the same bounded-concurrency fetch used above, and paginating with a stable cursor that survives concurrent taxonomy edits. See [Recipe Classification Workflow](#recipe-classification-workflow) below.
 - **Zero Runtime Dependencies Beyond the SDK** — Uses native `fetch`, no axios or httpx.
 
 ## Requirements
@@ -100,7 +101,7 @@ Make sure `MEALIE_BASE_URL` and `MEALIE_API_KEY` are set in your environment or 
 
 ## Documentation
 
-See [API Coverage](./API_COVERAGE.md) for a detailed breakdown of all 46 tools and their corresponding Mealie API endpoints.
+See [API Coverage](./API_COVERAGE.md) for a detailed breakdown of all tools and their corresponding Mealie API endpoints.
 
 ## Finding Recipes by Ingredient
 
@@ -189,6 +190,66 @@ Every value in `categories`/`tags` may be a name, a slug, or an ID — matching 
 
 Both tools return the recipe's `id`/`slug` plus, per collection, the `final` list after the update and which items were `added`, `removed`, or `created` — useful for confirming exactly what changed.
 
+## Recipe Classification Workflow
+
+`get_recipes_for_classification` exists because the general-purpose batch tools (`get_recipes_batch`, `get_recipes_detailed_batch`) return the *full* recipe payload — nutrition, settings, assets, images, comments — for every recipe requested, fetched with unbounded concurrency. On any non-trivial recipe count that reliably produces HTTP 504s through the MCP transport, even at batch sizes as small as 8-9. This tool instead:
+
+- Filters using the cheap recipe-list response (which already embeds each recipe's categories and tags), so full detail is only fetched for recipes that actually need classifying.
+- Fetches detail with **bounded concurrency** (a handful of requests in flight at a time), never `Promise.all`/`Promise.allSettled` across the whole batch.
+- Returns only fields useful for classification — no nutrition, settings, assets, images, comments, ratings, usage history, or internal ingredient/instruction UUIDs.
+- Reports a failed detail fetch as a per-recipe entry in `failures` instead of failing the whole call.
+
+### First page
+
+```json
+{
+  "limit": 25,
+  "taxonomyState": "missing_either"
+}
+```
+
+### Continuing to the next page
+
+Pass back `nextCursor` from the previous response unchanged:
+
+```json
+{
+  "cursor": "<opaque cursor returned by the previous call>",
+  "limit": 25,
+  "taxonomyState": "missing_either"
+}
+```
+
+### Recipes missing both Categories and Tags
+
+```json
+{
+  "limit": 25,
+  "taxonomyState": "missing_both"
+}
+```
+
+`taxonomyState` also accepts `missing_categories`, `missing_tags`, and `any` (no taxonomy filtering).
+
+### Recommended end-to-end workflow
+
+1. Call `get_recipes_for_classification`.
+2. Classify each returned recipe using its `ingredients`, `instructions`, and other fields, working within your existing Category/Tag taxonomy.
+3. Preserve each recipe's existing `categories`/`tags` from the response — only add to them.
+4. Apply additions with `update_recipe_taxonomy_batch` in batches of about five recipes, using `mode: "merge"` and `createMissing: false` unless the user explicitly asks to replace a recipe's collection or auto-create new categories/tags.
+5. Save each batch's successful write responses as a checkpoint.
+6. Continue calling `get_recipes_for_classification` with `nextCursor` until `hasMore` is `false`.
+7. If any individual read (`failures` in a classification page) or write (a failed entry from `update_recipe_taxonomy_batch`) fails, retry only that recipe — do not restart the whole pagination.
+
+### Pagination consistency
+
+Mealie's recipe list endpoint only supports `page`/`perPage`, not a native "after" cursor. This tool builds a stable cursor on top of that by scanning the full recipe collection ordered by `createdAt` (never `updatedAt`, since applying taxonomy changes that field) with the recipe id as a deterministic tie-breaker, and resuming by re-scanning the cursor's last known page and skipping everything at or before the cursor position. That means:
+
+- A recipe gaining or losing categories/tags between calls never causes another recipe to be skipped or duplicated, because pagination position is tracked independently of the taxonomy filter.
+- New recipes created while paginating are always sorted after everything already scanned, so they never shift previously-issued cursors.
+- **Known limitation**: this assumes Mealie's `/api/recipes` list endpoint accepts `orderBy=createdAt` and returns each recipe's `recipeCategory`/`tags` in the list response (not just in the detail response), consistent with the `recipeCategory`/`tags`/`orderBy` field names used elsewhere in this codebase. If a Mealie version does not honor `orderBy=createdAt` for this endpoint, the tool degrades to whatever stable order Mealie falls back to — traversal stays correct (no skips/duplicates, since resumption re-derives its position from the cursor's `createdAt`/`id` rather than trusting page arithmetic), but "oldest first" is no longer guaranteed. If a Mealie version omits `recipeCategory`/`tags` from the list response, filtering would need to move to the detail response instead — check the `MEALIE_MCP_DEBUG` scan-phase timing (below) if classification pages come back empty or unexpectedly small against a real instance.
+- A recipe that matches the filter but fails its detail fetch (see `failures`) is not retried automatically by continuing pagination — retry it directly (e.g. with `get_recipe_detailed`) once you've addressed the failure.
+
 ## Contributing
 
 I love your input! Please read the [Contribution Guidelines](./CONTRIBUTING.md) to get started.
@@ -225,10 +286,14 @@ yarn build
 yarn lint
 ```
 
-## Available Tools (46 total)
+### Debugging `get_recipes_for_classification`
 
-### Recipes (14)
-`get_recipes`, `find_recipes_for_ingredients`, `get_recipe_detailed`, `get_recipe_concise`, `get_recipes_batch`, `get_recipes_detailed_batch`, `create_recipe`, `patch_recipe`, `update_recipe_taxonomy`, `update_recipe_taxonomy_batch`, `duplicate_recipe`, `mark_recipe_last_made`, `set_recipe_image_from_url`, `delete_recipe`
+Set `MEALIE_MCP_DEBUG=true` in the server's environment to log per-call phase timings (scan/list, detail fetch, transform) for `get_recipes_for_classification` to stderr — useful for telling whether a slow call is spending its time listing recipes, fetching detail, or building the response. Diagnostics always go to stderr, never stdout, since stdout carries the MCP JSON-RPC transport.
+
+## Available Tools (47 total)
+
+### Recipes (15)
+`get_recipes`, `find_recipes_for_ingredients`, `get_recipe_detailed`, `get_recipe_concise`, `get_recipes_batch`, `get_recipes_detailed_batch`, `get_recipes_for_classification`, `create_recipe`, `patch_recipe`, `update_recipe_taxonomy`, `update_recipe_taxonomy_batch`, `duplicate_recipe`, `mark_recipe_last_made`, `set_recipe_image_from_url`, `delete_recipe`
 
 ### Meal Plans (5)
 `get_all_mealplans`, `get_mealplan_with_recipes`, `create_mealplan`, `create_mealplan_bulk`, `get_todays_mealplan`
