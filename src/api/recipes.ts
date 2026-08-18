@@ -1,5 +1,5 @@
 import { apiGet, apiPost, apiPatch, apiPut, apiDelete, buildQueryString, PaginatedResult } from './client.js';
-import { DEFAULT_DETAIL_FETCH_CONCURRENCY } from '../lib/concurrency.js';
+import { mapWithConcurrency, DEFAULT_DETAIL_FETCH_CONCURRENCY } from '../lib/concurrency.js';
 
 
 export async function getRecipes(
@@ -36,8 +36,7 @@ interface SettledResult {
 export async function getRecipesBatch(
   slugs: string[],
 ): Promise<Record<string, Record<string, unknown> | { error: string }>> {
-  const results = await 
-  <string, SettledResult>(
+  const results = await mapWithConcurrency<string, SettledResult>(
     slugs,
     DEFAULT_DETAIL_FETCH_CONCURRENCY,
     async (slug) => {
