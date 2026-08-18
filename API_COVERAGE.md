@@ -2,16 +2,17 @@
 
 | Category | Tools |
 |---|---|
-| Recipes | 13 |
+| Recipes | 14 |
 | Meal Plans | 5 |
 | Categories | 7 |
 | Tags | 7 |
 | Shopping Lists | 13 |
-| **Total** | **45** |
+| **Total** | **46** |
 
-## Recipe Operations (13)
+## Recipe Operations (14)
 
 - `get_recipes` — `GET /api/recipes` (paginated, search, filter by tags/categories). `categories`/`tags` are resolved by name, slug, or ID (case-insensitive) against `GET /api/organizers/categories`/`GET /api/organizers/tags` before the request, since Mealie's own query params only match by exact slug/ID and silently skip the filter (returning the unfiltered library) when a name doesn't match — unresolved values fail the call clearly instead.
+- `find_recipes_for_ingredients` — Composite: `GET /api/foods` (search) to resolve human-readable ingredient names to Mealie Food IDs, then either `GET /api/recipes/suggestions` (Mealie's Recipe Finder, ranked by fewest missing ingredients — one call per resolved food, run concurrently), `GET /api/recipes` with `foods`/`requireAllFoods` (strict AND match across every resolved ingredient), or `GET /api/recipes?search=` (free-text fallback, one call per unresolved term) depending on resolution results and `requireAllIngredients`. `categories`/`tags` are resolved the same way as `get_recipes`. Never fetches the full food or recipe library.
 - `get_recipe_detailed` — `GET /api/recipes/{slug}` (full details)
 - `get_recipe_concise` — `GET /api/recipes/{slug}` (filtered to summary fields)
 - `get_recipes_batch` — `GET /api/recipes/{slug}` for multiple slugs, with bounded concurrency (4 in flight at a time) rather than firing every request at once

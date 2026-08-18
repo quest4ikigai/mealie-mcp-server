@@ -1,0 +1,447 @@
+import * as recipesApi from '../api/recipes.js';
+import { resolveIngredients, ResolvedIngredient, UnresolvedIngredient } from './ingredient-resolution.js';
+import { resolveTaxonomyFilter } from './taxonomy-resolution.js';
+
+export interface FindRecipesForIngredientsInput {
+  ingredients: string[];
+  categories?: string[];
+  tags?: string[];
+  requireAllIngredients?: boolean;
+  requireAllCategories?: boolean;
+  requireAllTags?: boolean;
+  limit?: number;
+}
+
+export type RecipeMatchSource = 'suggestions' | 'food-filter' | 'text-search';
+export type OverallMatchSource = RecipeMatchSource | 'none';
+
+export interface RecipeCandidate {
+  name: string;
+  slug: string;
+  description?: string;
+  categories: string[];
+  tags: string[];
+  totalTime: string | null;
+  matchedIngredients: string[];
+  missingIngredients: string[];
+  matchSource: RecipeMatchSource;
+}
+
+export interface FindRecipesForIngredientsResult {
+  resolvedIngredients: ResolvedIngredient[];
+  unresolvedIngredients: UnresolvedIngredient[];
+  matchSource: OverallMatchSource;
+  recipes: RecipeCandidate[];
+  notes: string[];
+}
+
+const DEFAULT_LIMIT = 10;
+const MAX_LIMIT = 50;
+const OVERFETCH_MULTIPLIER = 4;
+const MAX_OVERFETCH = 100;
+
+// Mealie's suggestions endpoint defaults maxMissingFoods to 5 and *excludes* any recipe whose
+// count of other (non-requested) structured-Food ingredients exceeds it — it's tuned for "what
+// can I nearly make from my pantry", not "find recipes containing X". A 7-ingredient recipe like
+// "Lemon Herb Grilled Salmon" (6 other foods) would be silently dropped even though it contains
+// the exact requested salmon Food ID. We want ranking, not exclusion, so this is set far above any
+// realistic ingredient count.
+const UNBOUNDED_MISSING_FOODS = 1000;
+
+function clampLimit(limit: number | undefined): number {
+  const n = Math.trunc(limit ?? DEFAULT_LIMIT);
+  if (!Number.isFinite(n)) return DEFAULT_LIMIT;
+  return Math.min(Math.max(n, 1), MAX_LIMIT);
+}
+
+function namesFromTaxonomyList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return (value as Record<string, unknown>[])
+    .map((item) => (typeof item.name === 'string' ? item.name : undefined))
+    .filter((name): name is string => Boolean(name));
+}
+
+function taxonomyIdSet(recipe: Record<string, unknown>, field: 'recipeCategory' | 'tags'): Set<string> {
+  const raw = recipe[field];
+  const ids = new Set<string>();
+  if (Array.isArray(raw)) {
+    for (const item of raw as Record<string, unknown>[]) {
+      if (typeof item.id === 'string') ids.add(item.id);
+    }
+  }
+  return ids;
+}
+
+function matchesTaxonomyFilter(
+  recipe: Record<string, unknown>,
+  field: 'recipeCategory' | 'tags',
+  filterIds: string[] | undefined,
+  requireAll: boolean | undefined,
+): boolean {
+  if (!filterIds || filterIds.length === 0) return true;
+  const ids = taxonomyIdSet(recipe, field);
+  const hits = filterIds.map((id) => ids.has(id));
+  return requireAll ? hits.every(Boolean) : hits.some(Boolean);
+}
+
+function hasTaxonomyFilter(input: FindRecipesForIngredientsInput): boolean {
+  return (input.categories?.length ?? 0) > 0 || (input.tags?.length ?? 0) > 0;
+}
+
+/**
+ * Once the food-filter/text-search paths trust Mealie's own category/tag filtering (see
+ * foodFilterSearch's docstring), an empty result no longer distinguishes "nothing matched the
+ * ingredient at all" from "things matched the ingredient but got filtered out by category/tag" —
+ * Mealie only ever hands back the already-filtered set. Call this when a search comes back empty
+ * and a taxonomy filter was requested: `countWithoutTaxonomyFilter` re-runs the same query without
+ * categories/tags (cheap — Mealie reports `total` regardless of page size) so the caller can still
+ * report how many recipes were excluded, the same way the suggestions path's client-side filter
+ * always could.
+ */
+async function noteIngredientMatchesExcludedByTaxonomy(
+  input: FindRecipesForIngredientsInput,
+  notes: string[],
+  countWithoutTaxonomyFilter: () => Promise<number>,
+): Promise<void> {
+  if (!hasTaxonomyFilter(input)) return;
+
+  let unfilteredCount: number;
+  try {
+    unfilteredCount = await countWithoutTaxonomyFilter();
+  } catch {
+    return;
+  }
+
+  if (unfilteredCount > 0) {
+    notes.push(
+      `${unfilteredCount} recipe(s) matched the ingredient search but were excluded by the requested categories/tags filter.`,
+    );
+  }
+}
+
+function toRecipeCandidate(
+  recipe: Record<string, unknown>,
+  matchedIngredients: string[],
+  missingIngredients: string[],
+  matchSource: RecipeMatchSource,
+): RecipeCandidate {
+  return {
+    name: typeof recipe.name === 'string' ? recipe.name : '',
+    slug: typeof recipe.slug === 'string' ? recipe.slug : '',
+    description: typeof recipe.description === 'string' && recipe.description ? recipe.description : undefined,
+    categories: namesFromTaxonomyList(recipe.recipeCategory),
+    tags: namesFromTaxonomyList(recipe.tags),
+    totalTime: typeof recipe.totalTime === 'string' ? recipe.totalTime : null,
+    matchedIngredients,
+    missingIngredients,
+    matchSource,
+  };
+}
+
+/**
+ * Ranks recipes by fewest missing ingredients via Mealie's Recipe Finder (GET /api/recipes/suggestions),
+ * one call per resolved food so matchedIngredients can be tracked precisely per recipe (recipe libraries
+ * are large, but ingredient lists per call are always small — this is bounded by ingredient count, not
+ * recipe count). Used whenever the caller isn't requiring every ingredient to be present at once.
+ *
+ * Mealie's suggestions endpoint has no categories/tags params at all, so — unlike the other two
+ * search strategies below — this is the one place categories/tags genuinely have to be applied
+ * client-side rather than trusted to Mealie; `input.categories`/`input.tags` are assumed to
+ * already be resolved to canonical Mealie IDs by the caller (see resolveTaxonomyFilter).
+ */
+async function suggestionsSearch(
+  resolved: ResolvedIngredient[],
+  input: FindRecipesForIngredientsInput,
+  limit: number,
+  notes: string[],
+): Promise<RecipeCandidate[]> {
+  const perCallLimit = hasTaxonomyFilter(input) ? Math.min(limit * OVERFETCH_MULTIPLIER, MAX_OVERFETCH) : limit;
+
+  const settled = await Promise.allSettled(
+    resolved.map((r) =>
+      recipesApi.getRecipeSuggestions({
+        foods: [r.foodId],
+        limit: perCallLimit,
+        maxMissingFoods: UNBOUNDED_MISSING_FOODS,
+        includeFoodsOnHand: false,
+        includeToolsOnHand: false,
+      }),
+    ),
+  );
+
+  const failedQueries: string[] = [];
+  const bySlug = new Map<string, { recipe: Record<string, unknown>; matched: Set<string>; missingFoods: string[] }>();
+
+  settled.forEach((result, i) => {
+    if (result.status !== 'fulfilled') {
+      failedQueries.push(resolved[i].query);
+      return;
+    }
+    for (const item of result.value.items) {
+      const slug = typeof item.recipe.slug === 'string' ? item.recipe.slug : '';
+      if (!slug) continue;
+      const missingFoodNames = item.missingFoods
+        .map((f) => (typeof f.name === 'string' ? f.name : undefined))
+        .filter((n): n is string => Boolean(n));
+
+      const existing = bySlug.get(slug);
+      if (existing) {
+        existing.matched.add(resolved[i].query);
+        if (missingFoodNames.length < existing.missingFoods.length) {
+          existing.missingFoods = missingFoodNames;
+        }
+      } else {
+        bySlug.set(slug, { recipe: item.recipe, matched: new Set([resolved[i].query]), missingFoods: missingFoodNames });
+      }
+    }
+  });
+
+  if (failedQueries.length > 0 && failedQueries.length < resolved.length) {
+    notes.push(`Recipe suggestions lookup failed for: ${failedQueries.join(', ')} (other ingredients still searched).`);
+  } else if (failedQueries.length > 0 && failedQueries.length === resolved.length) {
+    throw new Error(`Mealie recipe suggestions lookup failed for all resolved ingredients: ${failedQueries.join(', ')}.`);
+  }
+
+  const merged = [...bySlug.values()];
+  const candidates = merged.filter(
+    (c) =>
+      matchesTaxonomyFilter(c.recipe, 'recipeCategory', input.categories, input.requireAllCategories) &&
+      matchesTaxonomyFilter(c.recipe, 'tags', input.tags, input.requireAllTags),
+  );
+  const excludedByTaxonomy = merged.length - candidates.length;
+  if (excludedByTaxonomy > 0) {
+    notes.push(
+      `${excludedByTaxonomy} recipe(s) matched the ingredient search but were excluded by the requested categories/tags filter.`,
+    );
+  }
+  candidates.sort((a, b) => b.matched.size - a.matched.size);
+
+  return candidates.slice(0, limit).map((c) => toRecipeCandidate(c.recipe, [...c.matched], c.missingFoods, 'suggestions'));
+}
+
+/**
+ * Strict AND match across every resolved ingredient via Mealie's normal recipe search
+ * (GET /api/recipes?foods=...&requireAllFoods=true). `input.categories`/`input.tags` are assumed
+ * to already be resolved to canonical Mealie IDs (see resolveTaxonomyFilter) and are trusted to
+ * Mealie's own server-side filtering — a plain UUID is matched directly, bypassing the slug
+ * lookup that made raw category/tag names unreliable.
+ */
+async function foodFilterSearch(
+  resolved: ResolvedIngredient[],
+  input: FindRecipesForIngredientsInput,
+  limit: number,
+  notes: string[],
+): Promise<RecipeCandidate[]> {
+  const foods = resolved.map((r) => r.foodId);
+
+  const page = await recipesApi.searchRecipesByFilter({
+    foods,
+    requireAllFoods: true,
+    categories: input.categories,
+    tags: input.tags,
+    requireAllCategories: input.requireAllCategories,
+    requireAllTags: input.requireAllTags,
+    perPage: limit,
+  });
+
+  if (page.items.length === 0) {
+    await noteIngredientMatchesExcludedByTaxonomy(input, notes, async () => {
+      // perPage: 1 — only `total` is needed, not the items themselves.
+      const unfiltered = await recipesApi.searchRecipesByFilter({ foods, requireAllFoods: true, perPage: 1 });
+      return unfiltered.total;
+    });
+  }
+
+  const matchedNames = resolved.map((r) => r.query);
+  return page.items.map((recipe) => toRecipeCandidate(recipe, matchedNames, [], 'food-filter'));
+}
+
+/**
+ * Free-text fallback via Mealie's normal recipe search (matches recipe name, description, and
+ * ingredient text server-side) for ingredient terms that had no Food match at all. One search
+ * call per term, merged and (optionally) intersected client-side — never a full-library scan.
+ * `input.categories`/`input.tags` are resolved IDs, trusted to Mealie's own filtering (see
+ * foodFilterSearch's docstring).
+ */
+interface TermMatch {
+  recipe: Record<string, unknown>;
+  matched: Set<string>;
+}
+
+/**
+ * Runs one Mealie search per term and merges the results by slug. `includeTaxonomyFilter`
+ * governs whether categories/tags are sent — kept togglable so textSearchFallback can re-run the
+ * exact same query without them as a cheap diagnostic when the filtered version comes back empty
+ * (see noteIngredientMatchesExcludedByTaxonomy).
+ */
+async function searchTermsAndMerge(
+  terms: string[],
+  input: FindRecipesForIngredientsInput,
+  perCallLimit: number,
+  includeTaxonomyFilter: boolean,
+): Promise<{ entries: TermMatch[]; failedTerms: string[] }> {
+  const settled = await Promise.allSettled(
+    terms.map((term) =>
+      recipesApi.searchRecipesByFilter({
+        search: term,
+        categories: includeTaxonomyFilter ? input.categories : undefined,
+        tags: includeTaxonomyFilter ? input.tags : undefined,
+        requireAllCategories: input.requireAllCategories,
+        requireAllTags: input.requireAllTags,
+        perPage: perCallLimit,
+      }),
+    ),
+  );
+
+  const failedTerms: string[] = [];
+  const successfulTerms: string[] = [];
+  const bySlug = new Map<string, TermMatch>();
+
+  settled.forEach((result, i) => {
+    const term = terms[i];
+    if (result.status !== 'fulfilled') {
+      failedTerms.push(term);
+      return;
+    }
+    successfulTerms.push(term);
+    for (const recipe of result.value.items) {
+      const slug = typeof recipe.slug === 'string' ? recipe.slug : '';
+      if (!slug) continue;
+      const existing = bySlug.get(slug);
+      if (existing) {
+        existing.matched.add(term);
+      } else {
+        bySlug.set(slug, { recipe, matched: new Set([term]) });
+      }
+    }
+  });
+
+  let entries = [...bySlug.values()];
+  if (input.requireAllIngredients && successfulTerms.length > 1) {
+    entries = entries.filter((e) => successfulTerms.every((t) => e.matched.has(t)));
+  }
+
+  return { entries, failedTerms };
+}
+
+async function textSearchFallback(
+  terms: string[],
+  input: FindRecipesForIngredientsInput,
+  limit: number,
+  notes: string[],
+): Promise<RecipeCandidate[]> {
+  if (terms.length === 0) return [];
+
+  const perCallLimit = terms.length > 1 ? Math.min(limit * OVERFETCH_MULTIPLIER, MAX_OVERFETCH) : limit;
+
+  const { entries, failedTerms } = await searchTermsAndMerge(terms, input, perCallLimit, true);
+
+  if (failedTerms.length > 0) {
+    notes.push(`Text search failed for: ${failedTerms.join(', ')}.`);
+  }
+  if (failedTerms.length === terms.length) {
+    throw new Error(`Mealie recipe search failed for all ingredient terms: ${failedTerms.join(', ')}.`);
+  }
+
+  if (entries.length === 0) {
+    await noteIngredientMatchesExcludedByTaxonomy(input, notes, async () => {
+      const unfiltered = await searchTermsAndMerge(terms, input, perCallLimit, false);
+      return unfiltered.entries.length;
+    });
+  }
+
+  entries.sort((a, b) => b.matched.size - a.matched.size);
+
+  return entries.slice(0, limit).map((e) => toRecipeCandidate(e.recipe, [...e.matched], [], 'text-search'));
+}
+
+/**
+ * Finds recipes for one or more human-readable ingredient names. Resolves ingredients against
+ * Mealie's food taxonomy internally (never requires the caller to know food UUIDs), prefers
+ * Mealie's own suggestions/search APIs over any local recipe scan, and never guesses between
+ * ambiguous ingredient matches — those are surfaced as unresolved for the caller to disambiguate
+ * or broaden.
+ */
+export async function findRecipesForIngredients(
+  input: FindRecipesForIngredientsInput,
+): Promise<FindRecipesForIngredientsResult> {
+  const ingredientQueries = (input.ingredients ?? []).map((i) => i.trim()).filter(Boolean);
+  if (ingredientQueries.length === 0) {
+    throw new Error('ingredients must contain at least one non-empty ingredient name.');
+  }
+
+  const limit = clampLimit(input.limit);
+  const notes: string[] = [];
+
+  // Resolve categories/tags to canonical Mealie IDs once, up front, via the shared taxonomy
+  // resolver — the same one get_recipes uses. Throws UnresolvedTaxonomyFilterError on anything
+  // that doesn't resolve, so every downstream search below can trust the categories/tags it's
+  // given rather than re-deriving/re-checking them itself.
+  const categories = await resolveTaxonomyFilter('category', input.categories);
+  const tags = await resolveTaxonomyFilter('tag', input.tags);
+  const resolvedInput: FindRecipesForIngredientsInput = { ...input, categories, tags };
+
+  const { resolved, unresolved } = await resolveIngredients(ingredientQueries);
+
+  if (resolved.length === 0) {
+    const textSearchTerms = unresolved
+      .filter((u) => u.reason === 'not-found' || u.reason === 'ambiguous')
+      .map((u) => u.query);
+    const recipes = await textSearchFallback(textSearchTerms, resolvedInput, limit, notes);
+    return {
+      resolvedIngredients: resolved,
+      unresolvedIngredients: unresolved,
+      matchSource: recipes.length > 0 ? 'text-search' : 'none',
+      recipes,
+      notes,
+    };
+  }
+
+  if (unresolved.length > 0) {
+    notes.push(
+      `${unresolved.length} ingredient(s) could not be resolved to a Mealie food and were excluded from matching: ` +
+        `${unresolved.map((u) => u.query).join(', ')}.`,
+    );
+  }
+
+  const useFoodFilter = resolved.length > 1 && input.requireAllIngredients === true;
+  if (useFoodFilter && unresolved.length > 0) {
+    notes.push('requireAllIngredients only applies to the ingredients that were successfully resolved to a Mealie food.');
+  }
+
+  // Notes from this attempt (e.g. the suggestions path's taxonomy exclusions) only matter if we
+  // actually return its results below — kept separate so a discarded attempt can't leave behind
+  // a note about data that isn't part of the response.
+  const primaryNotes: string[] = [];
+  const recipes = useFoodFilter
+    ? await foodFilterSearch(resolved, resolvedInput, limit, primaryNotes)
+    : await suggestionsSearch(resolved, resolvedInput, limit, primaryNotes);
+
+  if (recipes.length > 0) {
+    notes.push(...primaryNotes);
+    return {
+      resolvedIngredients: resolved,
+      unresolvedIngredients: unresolved,
+      matchSource: useFoodFilter ? 'food-filter' : 'suggestions',
+      recipes,
+      notes,
+    };
+  }
+
+  // Food-based matching resolved but found nothing useful — fall back to Mealie's normal
+  // text search on the original ingredient terms before giving up, same as the fully-unresolved
+  // case above. Food-based matching can legitimately come up empty (e.g. a resolved food that no
+  // recipe's structured ingredients reference yet), and text search may still surface candidates.
+  const fallbackRecipes = await textSearchFallback(ingredientQueries, resolvedInput, limit, notes);
+  if (fallbackRecipes.length > 0) {
+    notes.push("No results from Mealie's Recipe Finder for the resolved ingredient(s); fell back to normal recipe text search.");
+  }
+
+  return {
+    resolvedIngredients: resolved,
+    unresolvedIngredients: unresolved,
+    matchSource: fallbackRecipes.length > 0 ? 'text-search' : 'none',
+    recipes: fallbackRecipes,
+    notes,
+  };
+}

@@ -5,7 +5,7 @@ mealie-mcp-server
 [![GitHub Release](https://img.shields.io/github/v/tag/timo-reymann/mealie-mcp-server?label=version)](https://github.com/timo-reymann/mealie-mcp-server/releases)
 [![Renovate](https://img.shields.io/badge/renovate-enabled-green?logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzNjkgMzY5Ij48Y2lyY2xlIGN4PSIxODkuOSIgY3k9IjE5MC4yIiByPSIxODQuNSIgZmlsbD0iI2ZmZTQyZSIgdHJhbnNmb3JtPSJ0cmFuc2xhdGUoLTUgLTYpIi8+PHBhdGggZmlsbD0iIzhiYjViNSIgZD0iTTI1MSAyNTZsLTM4LTM4YTE3IDE3IDAgMDEwLTI0bDU2LTU2YzItMiAyLTYgMC03bC0yMC0yMWE1IDUgMCAwMC03IDBsLTEzIDEyLTktOCAxMy0xM2ExNyAxNyAwIDAxMjQgMGwyMSAyMWM3IDcgNyAxNyAwIDI0bC01NiA1N2E1IDUgMCAwMDAgN2wzOCAzOHoiLz48cGF0aCBmaWxsPSIjZDk1NjEyIiBkPSJNMzAwIDI4OGwtOCA4Yy00IDQtMTEgNC0xNiAwbC00Ni00NmMtNS01LTUtMTIgMC0xNmw4LThjNC00IDExLTQgMTUgMGw0NyA0N2M0IDQgNCAxMSAwIDE1eiIvPjxwYXRoIGZpbGw9IiMyNGJmYmUiIGQ9Ik04MSAxODVsMTgtMTggMTggMTgtMTggMTh6Ii8+PHBhdGggZmlsbD0iIzI1YzRjMyIgZD0iTTIyMCAxMDBsMjMgMjNjNCA0IDQgMTEgMCAxNkwxNDIgMjQwYy00IDQtMTEgNC0xNSAwbC0yNC0yNGMtNC00LTQtMTEgMC0xNWwxMDEtMTAxYzUtNSAxMi01IDE2IDB6Ii8+PHBhdGggZmlsbD0iIzFkZGVkZCIgZD0iTTk5IDE2N2wxOC0xOCAxOCAxOC0xOCAxOHoiLz48cGF0aCBmaWxsPSIjMDBhZmIzIiBkPSJNMjMwIDExMGwxMyAxM2M0IDQgNCAxMSAwIDE2TDE0MiAyNDBjLTQgNC0xMSA0LTE1IDBsLTEzLTEzYzQgNCAxMSA0IDE1IDBsMTAxLTEwMWM1LTUgNS0xMSAwLTE2eiIvPjxwYXRoIGZpbGw9IiMyNGJmYmUiIGQ9Ik0xMTYgMTQ5bDE4LTE4IDE4IDE4LTE4IDE4eiIvPjxwYXRoIGZpbGw9IiMxZGRlZGQiIGQ9Ik0xMzQgMTMxbDE4LTE4IDE4IDE4LTE4IDE4eiIvPjxwYXRoIGZpbGw9IiMxYmNmY2UiIGQ9Ik0xNTIgMTEzbDE4LTE4IDE4IDE4LTE4IDE4eiIvPjxwYXRoIGZpbGw9IiMyNGJmYmUiIGQ9Ik0xNzAgOTVsMTgtMTggMTggMTgtMTggMTh6Ii8+PHBhdGggZmlsbD0iIzFiY2ZjZSIgZD0iTTYzIDE2N2wxOC0xOCAxOCAxOC0xOCAxOHpNOTggMTMxbDE4LTE4IDE4IDE4LTE4IDE4eiIvPjxwYXRoIGZpbGw9IiMzNGVkZWIiIGQ9Ik0xMzQgOTVsMTgtMTggMTggMTgtMTggMTh6Ii8+PHBhdGggZmlsbD0iIzFiY2ZjZSIgZD0iTTE1MyA3OGwxOC0xOCAxOCAxOC0xOCAxOHoiLz48cGF0aCBmaWxsPSIjMzRlZGViIiBkPSJNODAgMTEzbDE4LTE3IDE4IDE3LTE4IDE4ek0xMzUgNjBsMTgtMTggMTggMTgtMTggMTh6Ii8+PHBhdGggZmlsbD0iIzk4ZWRlYiIgZD0iTTI3IDEzMWwxOC0xOCAxOCAxOC0xOCAxOHoiLz48cGF0aCBmaWxsPSIjYjUzZTAyIiBkPSJNMjg1IDI1OGw3IDdjNCA0IDQgMTEgMCAxNWwtOCA4Yy00IDQtMTEgNC0xNiAwbC02LTdjNCA1IDExIDUgMTUgMGw4LTdjNC01IDQtMTIgMC0xNnoiLz48cGF0aCBmaWxsPSIjOThlZGViIiBkPSJNODEgNzhsMTgtMTggMTggMTgtMTggMTh6Ii8+PHBhdGggZmlsbD0iIzAwYTNhMiIgZD0iTTIzNSAxMTVsOCA4YzQgNCA0IDExIDAgMTZMMTQyIDI0MGMtNCA0LTExIDQtMTUgMGwtOS05YzUgNSAxMiA1IDE2IDBsMTAxLTEwMWM0LTQgNC0xMSAwLTE1eiIvPjxwYXRoIGZpbGw9IiMzOWQ5ZDgiIGQ9Ik0yMjggMTA4bC04LThjLTQtNS0xMS01LTE2IDBMMTAzIDIwMWMtNCA0LTQgMTEgMCAxNWw4IDhjLTQtNC00LTExIDAtMTVsMTAxLTEwMWM1LTQgMTItNCAxNiAweiIvPjxwYXRoIGZpbGw9IiNhMzM5MDQiIGQ9Ik0yOTEgMjY0bDggOGM0IDQgNCAxMSAwIDE2bC04IDdjLTQgNS0xMSA1LTE1IDBsLTktOGM1IDUgMTIgNSAxNiAwbDgtOGM0LTQgNC0xMSAwLTE1eiIvPjxwYXRoIGZpbGw9IiNlYjZlMmQiIGQ9Ik0yNjAgMjMzbC00LTRjLTYtNi0xNy02LTIzIDAtNyA3LTcgMTcgMCAyNGw0IDRjLTQtNS00LTExIDAtMTZsOC04YzQtNCAxMS00IDE1IDB6Ii8+PHBhdGggZmlsbD0iIzEzYWNiZCIgZD0iTTEzNCAyNDhjLTQgMC04LTItMTEtNWwtMjMtMjNhMTYgMTYgMCAwMTAtMjNMMjAxIDk2YTE2IDE2IDAgMDEyMiAwbDI0IDI0YzYgNiA2IDE2IDAgMjJMMTQ2IDI0M2MtMyAzLTcgNS0xMiA1em03OC0xNDdsLTQgMi0xMDEgMTAxYTYgNiAwIDAwMCA5bDIzIDIzYTYgNiAwIDAwOSAwbDEwMS0xMDFhNiA2IDAgMDAwLTlsLTI0LTIzLTQtMnoiLz48cGF0aCBmaWxsPSIjYmY0NDA0IiBkPSJNMjg0IDMwNGMtNCAwLTgtMS0xMS00bC00Ny00N2MtNi02LTYtMTYgMC0yMmw4LThjNi02IDE2LTYgMjIgMGw0NyA0NmM2IDcgNiAxNyAwIDIzbC04IDhjLTMgMy03IDQtMTEgNHptLTM5LTc2Yy0xIDAtMyAwLTQgMmwtOCA3Yy0yIDMtMiA3IDAgOWw0NyA0N2E2IDYgMCAwMDkgMGw3LThjMy0yIDMtNiAwLTlsLTQ2LTQ2Yy0yLTItMy0yLTUtMnoiLz48L3N2Zz4=)](https://renovatebot.com)
 
-A [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server for [Mealie](https://github.com/mealie-recipes/mealie) recipe management. Exposes 45 tools and 1 prompt for AI assistants to search, create, and manage recipes, meal plans, shopping lists, categories, and tags.
+A [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server for [Mealie](https://github.com/mealie-recipes/mealie) recipe management. Exposes 46 tools and 1 prompt for AI assistants to search, create, and manage recipes, meal plans, shopping lists, categories, and tags.
 
 <p align="center">
     <img src="https://raw.githubusercontent.com/timo-reymann/mealie-mcp-server/main/.github/images/logo.png" alt="Logo" />
@@ -16,6 +16,7 @@ A [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server for [Me
 ## Features
 
 - **Recipe Management** — Search, create, patch, duplicate, and delete recipes. Batch-fetch multiple recipes with bounded concurrency.
+- **Ingredient-Based Recipe Discovery** — `find_recipes_for_ingredients` resolves human-readable ingredient names (never Mealie food UUIDs) against Mealie's food taxonomy and finds matching recipes via Mealie's Recipe Finder, falling back to normal recipe search when there's no exact food match — useful for "what can I make with X" style discovery, including ingredients Mealie doesn't know by that exact name (the calling LLM broadens the search with substitute terms; the MCP itself never guesses substitutions).
 - **Recipe Categories & Tags Assignment** — Assign Categories and Tags to existing recipes with merge/replace semantics, name/slug/ID resolution, and optional auto-creation of missing values, without disturbing ingredients, instructions, nutrition, or any other recipe field. Available via `patch_recipe`, `update_recipe_taxonomy`, and `update_recipe_taxonomy_batch`.
 - **Meal Planning** — View, create, and bulk-create meal plans. Composite tool fetches meal plans with embedded recipe details (including nutrition) using concurrent batch requests, eliminating N+1 queries.
 - **Shopping Lists** — Full CRUD for lists and items, bulk operations, and recipe-to-list integration.
@@ -99,7 +100,39 @@ Make sure `MEALIE_BASE_URL` and `MEALIE_API_KEY` are set in your environment or 
 
 ## Documentation
 
-See [API Coverage](./API_COVERAGE.md) for a detailed breakdown of all 45 tools and their corresponding Mealie API endpoints.
+See [API Coverage](./API_COVERAGE.md) for a detailed breakdown of all 46 tools and their corresponding Mealie API endpoints.
+
+## Finding Recipes by Ingredient
+
+`find_recipes_for_ingredients` lets an AI assistant discover recipes from human-readable ingredient names (e.g. `"branzino"`, `"chicken thighs"`) without ever needing to know Mealie's internal food UUIDs. The MCP handles all Mealie-specific mechanics — resolving names to Mealie Food objects, calling Mealie's Recipe Finder (`GET /api/recipes/suggestions`) or normal recipe search — while ingredient substitution/broadening (e.g. deciding that "sea bass" or "whole fish" are reasonable stand-ins for "branzino") is left to the calling LLM.
+
+**Ingredient resolution**, in order, per ingredient:
+1. Exact case-insensitive match on the food's name.
+2. Exact case-insensitive match on the food's plural name or one of its aliases (Mealie's Food object has no `slug` field, unlike Category/Tag).
+3. A single unique result from Mealie's food search, if nothing above matched.
+
+If a name matches multiple foods with no unique candidate (e.g. `"fish"`), it's reported back as `ambiguous` with the candidate names — the tool never guesses.
+
+**Search strategy**, depending on what resolved:
+
+```json
+{ "ingredients": ["salmon"], "categories": ["Dinner"] }
+```
+Resolves `salmon` to a Food, then uses Mealie's Recipe Finder — recipes are ranked by how many of the resolved ingredients they use and how few other ingredients they're missing. `matchSource: "suggestions"`.
+
+```json
+{ "ingredients": ["branzino"] }
+```
+No Food match for `branzino` → falls back to Mealie's normal recipe search (matches recipe name, description, and ingredient text). If that also finds nothing useful, `unresolvedIngredients` reports it so the LLM can retry with a broader term like `"sea bass"` or `"whole fish"`. `matchSource: "text-search"` (or `"none"` if nothing came back).
+
+```json
+{ "ingredients": ["chicken thighs", "broccoli"], "requireAllIngredients": true }
+```
+With two or more resolved ingredients and `requireAllIngredients: true`, uses Mealie's normal recipe search with a strict food-based AND filter instead of the Finder. `matchSource: "food-filter"`.
+
+`categories`/`tags` are resolved the same way as `get_recipes` — by name, slug, or ID, case-insensitively — before any search runs, and sent to Mealie as canonical IDs for the food-filter and text-search paths; for the Recipe Finder path (which has no taxonomy filters of its own) they're applied to the returned candidates instead.
+
+Each returned recipe includes `name`, `slug`, `description`, `categories`, `tags`, `totalTime`, which requested ingredients it matched, and (for Recipe Finder results) which other ingredients it's missing — enough to decide what's worth a closer look with `get_recipe_detailed` or `get_recipes_batch`, without an extra round trip per candidate.
 
 ## Assigning Categories & Tags
 
@@ -192,10 +225,10 @@ yarn build
 yarn lint
 ```
 
-## Available Tools (45 total)
+## Available Tools (46 total)
 
-### Recipes (13)
-`get_recipes`, `get_recipe_detailed`, `get_recipe_concise`, `get_recipes_batch`, `get_recipes_detailed_batch`, `create_recipe`, `patch_recipe`, `update_recipe_taxonomy`, `update_recipe_taxonomy_batch`, `duplicate_recipe`, `mark_recipe_last_made`, `set_recipe_image_from_url`, `delete_recipe`
+### Recipes (14)
+`get_recipes`, `find_recipes_for_ingredients`, `get_recipe_detailed`, `get_recipe_concise`, `get_recipes_batch`, `get_recipes_detailed_batch`, `create_recipe`, `patch_recipe`, `update_recipe_taxonomy`, `update_recipe_taxonomy_batch`, `duplicate_recipe`, `mark_recipe_last_made`, `set_recipe_image_from_url`, `delete_recipe`
 
 ### Meal Plans (5)
 `get_all_mealplans`, `get_mealplan_with_recipes`, `create_mealplan`, `create_mealplan_bulk`, `get_todays_mealplan`
