@@ -1,3 +1,10 @@
+## [1.5.2](https://github.com/timo-reymann/mealie-mcp-server/compare/v1.5.1...v1.5.2) (2026-08-18)
+
+
+### Bug Fixes
+
+* get_recipes ignoring multi-value categories/tags filters ([#7](https://github.com/timo-reymann/mealie-mcp-server/issues/7)) ([07f53ff](https://github.com/timo-reymann/mealie-mcp-server/commit/07f53ff4508f59c288d7d44814dc27b124588877))
+
 ## [1.5.1](https://github.com/timo-reymann/mealie-mcp-server/compare/v1.5.0...v1.5.1) (2026-08-18)
 
 
