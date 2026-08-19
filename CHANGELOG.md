@@ -1,3 +1,10 @@
+# [1.7.0](https://github.com/timo-reymann/mealie-mcp-server/compare/v1.6.0...v1.7.0) (2026-08-19)
+
+
+### Features
+
+* add get_recipes_for_classification tool ([#11](https://github.com/timo-reymann/mealie-mcp-server/issues/11)) ([9ec058d](https://github.com/timo-reymann/mealie-mcp-server/commit/9ec058df287e7fce8c24aeb2e7417ee7e1258e1b)), closes [server#tool](https://github.com/server/issues/tool)
+
 # [1.6.0](https://github.com/timo-reymann/mealie-mcp-server/compare/v1.5.3...v1.6.0) (2026-08-18)
 
 
