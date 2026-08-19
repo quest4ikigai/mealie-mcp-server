@@ -11,6 +11,12 @@ import {
   CLASSIFICATION_DEFAULT_TAXONOMY_STATE,
 } from '../lib/recipe-classification.js';
 import { updateRecipeIngredients } from '../lib/recipe-ingredients.js';
+import {
+  getRecipesForIngredientParsing,
+  INGREDIENT_PARSING_DEFAULT_LIMIT,
+  INGREDIENT_PARSING_MAX_LIMIT,
+  INGREDIENT_PARSING_DEFAULT_STATE,
+} from '../lib/recipe-ingredient-parsing.js';
 
 const taxonomyModeSchema = z
   .enum(['merge', 'replace'])
@@ -303,6 +309,78 @@ export function registerRecipeTools(server: McpServer) {
     async ({ cursor, limit, taxonomyState }) => {
       try {
         const result = await getRecipesForClassification({ cursor, limit, taxonomyState });
+        return successResponse(result);
+      } catch (error) {
+        return errorResponse(error);
+      }
+    },
+  );
+
+  server.tool(
+    'get_recipes_for_ingredient_parsing',
+    'Compact, paginated, READ-ONLY work queue of recipes whose ingredients may need structured parsing. This ' +
+      'tool does NOT parse ingredient text itself — it never calls Mealie\'s NLP ingredient parser, never guesses ' +
+      'a food/unit association, and never modifies any recipe, food, alias, or ingredient. It only identifies ' +
+      'candidate recipes and returns each ingredient\'s EXISTING structured state (quantity, unit id/name, food ' +
+      'id/name, note, display, originalText, title, referenceId) plus recipe instructions (title, text, ' +
+      'ingredientReferences) for context — interpreting free-form ingredient text (e.g. "2 tablespoons chopped ' +
+      'fresh parsley leaves" -> quantity 2, unit tablespoon, food parsley, note "chopped fresh") is entirely the ' +
+      'calling model\'s job, not this tool\'s. Each ingredient includes a deterministic, schema-only ' +
+      '"parsingState": "section" (a Mealie ingredient-section heading, identified by a non-empty title — never ' +
+      'counted as needing parsing), "unparsed" (no food is associated — the primary, high-confidence signal), ' +
+      '"partial" (a food is associated but no unit, while quantity is a positive number — NOTE: this also matches ' +
+      'legitimately unit-less countable foods like "4 eggs" or "2 lemons", since Mealie\'s schema has no field ' +
+      'distinguishing that from an incompletely-structured row; treat "partial" as a coarse audit signal, not a ' +
+      'confirmed defect), or "structured" (fully resolved). Each recipe also includes an ingredientParsingState ' +
+      'summary (unparsedCount/partialCount/structuredCount/sectionCount/totalCount). Use "state" to choose the ' +
+      'queue: "unparsed_only" (default) — recipes with at least one unparsed ingredient; "partially_parsed" — ' +
+      'recipes with at least one partial ingredient; "any" — every scanned recipe, for auditing. Every scanned ' +
+      'recipe needs a full detail fetch (Mealie\'s recipe list endpoint does not expose ingredients), fetched ' +
+      'with bounded concurrency in small batches — a failure reading one recipe is reported in failures and does ' +
+      'not fail the rest of the page. Pass the response\'s nextCursor back unchanged as the next call\'s cursor to ' +
+      'continue; stop once hasMore is false. Pagination is stable against concurrent recipe edits, the same way ' +
+      'get_recipes_for_classification is. When you later write changes, use get_foods/get_food (or unit lookups) ' +
+      'separately to resolve canonical food/unit entities — this tool never looks them up or creates them — then ' +
+      'call update_recipe_ingredients with the complete, corrected ingredient collection for that recipe, always ' +
+      'preserving each ingredient\'s existing referenceId (never invent a new one) since recipe instructions may ' +
+      'reference ingredients by it. Note: recipe instruction ids returned here are NOT stable — Mealie recreates ' +
+      'recipeInstructions (and assigns fresh ids) on every recipe update, including update_recipe_ingredients — ' +
+      'do not depend on an instruction id read here still being valid after a write.',
+    {
+      cursor: z
+        .string()
+        .optional()
+        .describe(
+          'Opaque continuation token from a previous call\'s nextCursor. Pass it back unchanged to resume ' +
+            'exactly where that call left off; omit it to start from the beginning of the collection. Do not ' +
+            'construct or edit this value — malformed or foreign cursors are rejected with a clear error.',
+        ),
+      limit: z
+        .number()
+        .int(`limit must be between 1 and ${INGREDIENT_PARSING_MAX_LIMIT}.`)
+        .min(1, `limit must be between 1 and ${INGREDIENT_PARSING_MAX_LIMIT}.`)
+        .max(INGREDIENT_PARSING_MAX_LIMIT, `limit must be between 1 and ${INGREDIENT_PARSING_MAX_LIMIT}.`)
+        .optional()
+        .describe(`Maximum recipes to return (1-${INGREDIENT_PARSING_MAX_LIMIT}, default ${INGREDIENT_PARSING_DEFAULT_LIMIT}).`),
+      state: z
+        .enum(['unparsed_only', 'partially_parsed', 'any'])
+        .optional()
+        .describe(
+          `Which recipes to include (default "${INGREDIENT_PARSING_DEFAULT_STATE}"): "unparsed_only" — at least ` +
+            'one ingredient has no associated food; "partially_parsed" — at least one ingredient has a food but ' +
+            'no unit despite a positive quantity (coarse signal, see tool description for its known false-positive ' +
+            'tradeoff); "any" — no filtering, every scanned recipe is returned (useful for auditing).',
+        ),
+    },
+    {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+    async ({ cursor, limit, state }) => {
+      try {
+        const result = await getRecipesForIngredientParsing({ cursor, limit, state });
         return successResponse(result);
       } catch (error) {
         return errorResponse(error);
