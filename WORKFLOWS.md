@@ -216,3 +216,61 @@ Pass back `nextCursor` from the previous response unchanged:
 5. Save each batch's successful write responses as a checkpoint.
 6. Continue calling `get_recipes_for_classification` with `nextCursor` until `hasMore` is `false`.
 7. If any individual read (`failures` in a classification page) or write (a failed entry from `update_recipe_taxonomy_batch`) fails, retry only that recipe — do not restart the whole pagination.
+
+## Ingredient Parsing Workflow
+
+`get_recipes_for_ingredient_parsing` is a compact, paginated, **READ-ONLY** work queue of recipes whose ingredients may still need structured parsing — the ingredient-parsing counterpart to `get_recipes_for_classification`. It never modifies a recipe, food, alias, or ingredient, and it never parses ingredient text itself: it does not call Mealie's NLP ingredient parser, does not guess a food/unit association, and does not decide linguistically whether a line "contains a unit". Interpreting free-form ingredient text (e.g. `"2 tablespoons chopped fresh parsley leaves"` → quantity `2`, unit `tablespoon`, food `parsley`, note `"chopped fresh"`) is entirely the calling model's responsibility.
+
+The intended workflow:
+
+1. Call `get_recipes_for_ingredient_parsing` to get a page of recipes needing attention.
+2. For each ingredient, interpret its existing text (`display`/`note`/`originalText`) yourself — the MCP does not do this.
+3. Resolve canonical food/unit IDs separately with `get_foods`/`get_food` (see [Resolving or Creating a Food](#resolving-or-creating-a-food) above) or Mealie's unit endpoints. This tool never looks up or creates foods/units.
+4. Decide whether a new food or alias is warranted (this tool has no opinion on that).
+5. Call `update_recipe_ingredients` (see [Updating Structured Recipe Ingredients](#updating-structured-recipe-ingredients) above) with the recipe's **complete** corrected ingredient collection, preserving each ingredient's existing `referenceId` — recipe instructions may reference ingredients by it, and this tool never generates new ones.
+6. Continue calling `get_recipes_for_ingredient_parsing` with `nextCursor` until `hasMore` is `false`.
+
+### Arguments
+
+```json
+{
+  "cursor": "<opaque cursor from a previous call, omit to start over>",
+  "limit": 25,
+  "state": "unparsed_only"
+}
+```
+
+- `limit` — 1-50, default 25.
+- `state` — which recipes to include, default `"unparsed_only"`:
+  - `"unparsed_only"` — at least one ingredient has no associated food.
+  - `"partially_parsed"` — at least one ingredient has a food but no unit despite a positive quantity (see the false-positive caveat below).
+  - `"any"` — no filtering; every scanned recipe is returned, useful for auditing.
+
+### What each ingredient's `parsingState` means (and what it doesn't)
+
+Mealie's `RecipeIngredient` schema, confirmed against a live instance, exposes no explicit "is this a section heading" or "is this deliberately free-form" flag — only `title`, `quantity`, `unit`, `food`, `note`, `display`, `originalText`, and `referenceId` are actually present on read. So classification here is deliberately narrow and schema-only, never linguistic:
+
+- **`section`** — `title` is non-empty. This is Mealie's own mechanism for ingredient section headers (e.g. "For the sauce"); a heading row is never counted as needing parsing, so a recipe made entirely of structured ingredients plus a section heading still correctly reads as fully parsed.
+- **`unparsed`** — `title` is empty and `food` is `null`. The primary, high-confidence signal this tool is built around.
+- **`partial`** — `food` is present but `unit` is `null` while `quantity` is a positive number. **Known limitation**: this is indistinguishable, without linguistic parsing, from a legitimately unit-less countable ingredient — real-world data shows things like `"4 eggs"`, `"2 lemons"`, or `"1 pie crust"` are commonly and *correctly* structured with no unit at all. Treat `partially_parsed` results as a coarse audit signal to sanity-check, not a confirmed defect.
+- **`structured`** — a food is present and either a unit is present, or quantity isn't a positive number (e.g. a to-taste garnish with no meaningful quantity).
+
+**"Free-form" entries** (deliberately non-food lines, e.g. "extra napkins") were investigated but are **not** exposed as a distinct state: nothing in Mealie's schema distinguishes them from a genuinely unparsed food ingredient — both are `food: null`, `title` empty, with text in `note`/`display`. Rather than fabricate a distinction the data can't support, such rows are classified as `unparsed` like any other food-less ingredient.
+
+**`originalText` is not a reliable signal.** It was investigated as a possible "this came from unparsed source text" marker but discarded — on a live Mealie instance it was observed `null` on every ingredient, fully structured and completely unparsed alike. Imported/scraped recipes put the raw ingredient line straight into `note`/`display` instead. This tool still returns `originalText` when Mealie does populate it, but does not rely on it for classification.
+
+### Returned ingredient fields
+
+Each ingredient preserves its current Mealie state — never a transformed interpretation — so it can be safely round-tripped later through `update_recipe_ingredients`: `referenceId`, `quantity`, `unit` (`{id, name}` or `null`), `food` (`{id, name}` or `null`), `note`, `display`, `originalText`, `title`, and the derived `parsingState` described above.
+
+### Instruction context
+
+Each recipe also includes its instructions (`title`, `text`, `ingredientReferences`) unchanged, since instruction text can disambiguate an otherwise vague ingredient line (e.g. `"1 package ranch"` might mean ranch dressing mix or ranch seasoning — the instructions often make it clear). Instruction `id`s are included when present but, exactly as with `update_recipe_ingredients`, **must not be depended on for stability** — Mealie recreates every `recipeInstructions` row (with a fresh `id`) on any recipe update, including one made via `update_recipe_ingredients`. `referenceId` on the ingredient (not the instruction `id`) is the stable identity `ingredientReferences` actually links against.
+
+### Pagination and efficiency
+
+Pagination reuses the same stable, opaque cursor mechanism as `get_recipes_for_classification` (see [Architecture](./ARCHITECTURE.md#pagination--cursor-design)) — scanning the full recipe collection ordered by `createdAt` with the recipe id as a tie-breaker, so a recipe's ingredients changing state between calls never causes another recipe to be skipped or duplicated. Pass `nextCursor` back unchanged to continue; stop once `hasMore` is `false`.
+
+**Efficiency note**: unlike classification, Mealie's recipe list endpoint does not include `recipeIngredient`, so this tool cannot cheaply pre-filter from the list response — every scanned recipe needs a full detail fetch to know whether it matches (why, and what else was ruled out, is in [Architecture](./ARCHITECTURE.md#why-ingredient-parsing-cant-pre-filter-cheaply)). Detail fetches happen in small batches with the same bounded concurrency used elsewhere in this server, not `Promise.all` across the whole scan. On a library where only a small fraction of recipes need parsing, filling a page can take noticeably longer than classification's equivalent call; a page may come back with `hasMore: true` and fewer than `limit` items if an internal time budget is hit first — just continue with `nextCursor`.
+
+As with `get_recipes_for_classification`, a failure reading one recipe is reported in `failures` and does not fail the rest of the page.
