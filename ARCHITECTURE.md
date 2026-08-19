@@ -20,9 +20,13 @@ This gives two guarantees:
 - A recipe gaining or losing categories/tags between calls never causes another recipe to be skipped or duplicated, because pagination position is tracked independently of the taxonomy filter.
 - New recipes created while paginating are always sorted after everything already scanned, so they never shift previously-issued cursors.
 
-**Known limitation**: this assumes Mealie's `/api/recipes` list endpoint accepts `orderBy=createdAt` and returns each recipe's `recipeCategory`/`tags` in the list response (not just in the detail response), consistent with the `recipeCategory`/`tags`/`orderBy` field names used elsewhere in this codebase. If a Mealie version does not honor `orderBy=createdAt` for this endpoint, the tool degrades to whatever stable order Mealie falls back to — traversal stays correct (no skips/duplicates, since resumption re-derives its position from the cursor's `createdAt`/`id` rather than trusting page arithmetic), but "oldest first" is no longer guaranteed. If a Mealie version omits `recipeCategory`/`tags` from the list response, filtering would need to move to the detail response instead — check the `MEALIE_MCP_DEBUG` scan-phase timing (see README's Development section) if classification pages come back empty or unexpectedly small against a real instance.
+**Known limitation**: this assumes Mealie's `/api/recipes` list endpoint accepts `orderBy=createdAt` and returns each recipe's `recipeCategory`/`tags` in the list response (not just in the detail response), consistent with the `recipeCategory`/`tags`/`orderBy` field names used elsewhere in this codebase. If a Mealie version does not honor `orderBy=createdAt` for this endpoint, the tool degrades to whatever stable order Mealie falls back to — traversal stays correct (no skips/duplicates, since resumption re-derives its position from the cursor's `createdAt`/`id` rather than trusting page arithmetic), but "oldest first" is no longer guaranteed. If a Mealie version omits `recipeCategory`/`tags` from the list response, filtering would need to move to the detail response instead — check the `MEALIE_MCP_DEBUG` scan-phase timing (see [Debugging](#debugging) below) if classification pages come back empty or unexpectedly small against a real instance.
 
 A recipe that matches the filter but fails its detail fetch (see `failures` in the response) is not retried automatically by continuing pagination — retry it directly (e.g. with `get_recipe_detailed`) once the failure is addressed.
+
+## Debugging
+
+Set `MEALIE_MCP_DEBUG=true` in the server's environment to log per-call phase timings (scan/list, detail fetch, transform) for `get_recipes_for_classification` to stderr — useful for telling whether a slow call is spending its time listing recipes, fetching detail, or building the response. Diagnostics always go to stderr, never stdout, since stdout carries the MCP JSON-RPC transport.
 
 ## Known Mealie API Quirks
 

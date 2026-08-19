@@ -143,10 +143,6 @@ yarn build
 yarn lint
 ```
 
-### Debugging `get_recipes_for_classification`
-
-Set `MEALIE_MCP_DEBUG=true` in the server's environment to log per-call phase timings (scan/list, detail fetch, transform) for `get_recipes_for_classification` to stderr — useful for telling whether a slow call is spending its time listing recipes, fetching detail, or building the response. Diagnostics always go to stderr, never stdout, since stdout carries the MCP JSON-RPC transport.
-
 ## Available Tools (53 total)
 
 ### Recipes (16)
