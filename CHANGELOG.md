@@ -1,3 +1,15 @@
+# [1.8.0](https://github.com/timo-reymann/mealie-mcp-server/compare/v1.7.0...v1.8.0) (2026-08-20)
+
+
+### Bug Fixes
+
+* update_food sending id: null, violating Mealie's NOT NULL constraint ([209e8c9](https://github.com/timo-reymann/mealie-mcp-server/commit/209e8c9e7a8cba4fcea16db61018865203b8b830))
+
+
+### Features
+
+* add food CRUD tools (get_foods, get_food, create_food, update_food, delete_food) ([d45a1d9](https://github.com/timo-reymann/mealie-mcp-server/commit/d45a1d921fb2c30c90a766ee42fd651f36326131))
+
 # [1.7.0](https://github.com/timo-reymann/mealie-mcp-server/compare/v1.6.0...v1.7.0) (2026-08-19)
 
 
