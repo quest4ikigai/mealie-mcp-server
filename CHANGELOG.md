@@ -1,3 +1,10 @@
+# [1.9.0](https://github.com/timo-reymann/mealie-mcp-server/compare/v1.8.0...v1.9.0) (2026-08-20)
+
+
+### Features
+
+* add update_recipe_ingredients tool ([#13](https://github.com/timo-reymann/mealie-mcp-server/issues/13)) ([04cb46f](https://github.com/timo-reymann/mealie-mcp-server/commit/04cb46f080783976cd3486527dee5818a14550e9))
+
 # [1.8.0](https://github.com/timo-reymann/mealie-mcp-server/compare/v1.7.0...v1.8.0) (2026-08-20)
 
 
