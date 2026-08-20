@@ -107,9 +107,15 @@ Make sure `MEALIE_BASE_URL` and `MEALIE_API_KEY` are set in your environment or 
 - [Workflows](./WORKFLOWS.md) — usage guides and example payloads for the more involved tools: ingredient discovery, taxonomy assignment, foods, structured ingredient writes, and the recipe classification feed.
 - [Architecture](./ARCHITECTURE.md) — internal design notes for contributors: bounded-concurrency rationale, pagination/cursor design, and known Mealie API quirks.
 
-## Contributing
+## Contributors
 
 I love your input! Please read the [Contribution Guidelines](./CONTRIBUTING.md) to get started.
+
+[![Contributors](https://contrib.rocks/image?repo=timo-reymann/mealie-mcp-server)](https://github.com/timo-reymann/mealie-mcp-server/graphs/contributors)
+
+> Want to appear in the list of contributors?
+>
+> Get started by reading the [Contribution Guidelines](./CONTRIBUTING.md)
 
 ## Development
 
