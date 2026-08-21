@@ -30,6 +30,12 @@ export interface MatchFieldSpec extends MatchField, MatchFieldFilter {}
 export interface QueryMatchResult {
   query: string;
   items: (Record<string, unknown> & MatchInfo)[];
+  /**
+   * True when additional matching candidates may exist beyond `items`, for either reason: the ranked
+   * candidate list was longer than `maxMatchesPerQuery` and got capped, or the underlying Mealie
+   * `queryFilter` request itself came back paginated short (its own candidate pool was incomplete).
+   * Callers should treat both cases identically — `items` is not necessarily the full candidate set.
+   */
   truncated: boolean;
   error?: string;
 }
@@ -124,7 +130,9 @@ export async function lookupCandidates(
   const candidatesById = new Map<string, Record<string, unknown>>();
   const failedKeys = new Map<string, string>(); // dedup key -> error message
   // Keys whose chunk's Mealie response was itself paginated/cut off, meaning that chunk's candidate
-  // pool may be missing rows (distinct from this tool's own maxMatchesPerQuery display cap below).
+  // pool may be missing rows. This is one of two independent reasons a query's public `truncated` can
+  // end up true — the other, checked below once the full ranked list is known, is this tool's own
+  // maxMatchesPerQuery cap.
   const truncatedKeys = new Set<string>();
   let apiRequestCount = 0;
 
@@ -153,10 +161,12 @@ export async function lookupCandidates(
     }
 
     const ranked = classifyAndRank(candidatePool, fields, query);
+    const retrievalIncomplete = truncatedKeys.has(key);
+    const cappedByMaxMatches = ranked.length > maxMatchesPerQuery;
     return {
       query,
       items: ranked.slice(0, maxMatchesPerQuery),
-      truncated: truncatedKeys.has(key),
+      truncated: retrievalIncomplete || cappedByMaxMatches,
     };
   });
 

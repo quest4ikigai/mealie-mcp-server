@@ -138,8 +138,12 @@ describe('lookupCandidates — partial failure handling', () => {
   });
 });
 
-describe('lookupCandidates — candidate pool limits', () => {
-  it('caps each query\'s results at maxMatchesPerQuery, keeping the strongest matches', async () => {
+describe('lookupCandidates — candidate pool limits and the public `truncated` flag', () => {
+  // `truncated` must mean "items is not necessarily the full candidate set", true whenever EITHER the
+  // ranked list was longer than maxMatchesPerQuery and got capped, OR the underlying Mealie retrieval
+  // for that query's chunk was itself paginated short — never only the latter (see multi-query-lookup.ts).
+
+  it('caps each query\'s results at maxMatchesPerQuery, keeping the strongest matches, and reports truncated: true', async () => {
     const many = Array.from({ length: 5 }, (_, i) => item(`${i}`, `zzz-basil-${i}`));
     many.push(item('exact', 'basil'));
     const fetchCandidates = vi.fn((): Promise<FetchCandidatesResult> => Promise.resolve({ items: many, total: many.length }));
@@ -148,22 +152,108 @@ describe('lookupCandidates — candidate pool limits', () => {
 
     expect(result.matches[0].items).toHaveLength(3);
     expect(result.matches[0].items[0].id).toBe('exact'); // exact match ranked first, so never trimmed away
+    expect(result.matches[0].truncated).toBe(true);
   });
 
-  it('flags a query as truncated when its chunk\'s Mealie response was itself paginated short', async () => {
+  it('reports truncated: false when the candidate count is exactly maxMatchesPerQuery', async () => {
+    const exact = Array.from({ length: 3 }, (_, i) => item(`${i}`, `basil-${i}`));
+    const fetchCandidates = vi.fn((): Promise<FetchCandidatesResult> => Promise.resolve({ items: exact, total: exact.length }));
+
+    const result = await lookupCandidates(['basil'], fields, 3, fetchCandidates);
+
+    expect(result.matches[0].items).toHaveLength(3);
+    expect(result.matches[0].truncated).toBe(false);
+  });
+
+  it('reports truncated: true when the candidate count is exactly one more than maxMatchesPerQuery', async () => {
+    const overByOne = Array.from({ length: 4 }, (_, i) => item(`${i}`, `basil-${i}`));
+    const fetchCandidates = vi.fn((): Promise<FetchCandidatesResult> => Promise.resolve({ items: overByOne, total: overByOne.length }));
+
+    const result = await lookupCandidates(['basil'], fields, 3, fetchCandidates);
+
+    expect(result.matches[0].items).toHaveLength(3);
+    expect(result.matches[0].truncated).toBe(true);
+  });
+
+  it('reports truncated: false when the candidate count is below maxMatchesPerQuery', async () => {
+    const fewer = Array.from({ length: 2 }, (_, i) => item(`${i}`, `basil-${i}`));
+    const fetchCandidates = vi.fn((): Promise<FetchCandidatesResult> => Promise.resolve({ items: fewer, total: fewer.length }));
+
+    const result = await lookupCandidates(['basil'], fields, 10, fetchCandidates);
+
+    expect(result.matches[0].items).toHaveLength(2);
+    expect(result.matches[0].truncated).toBe(false);
+  });
+
+  it('reports truncated: true when the underlying Mealie retrieval was itself paginated short, even under the cap', async () => {
+    // Only 1 candidate came back (well under maxMatchesPerQuery: 10), but Mealie's own total (500) says
+    // there were more rows than this request's page size returned — the local cap never kicked in here,
+    // so this exercises the retrieval-incompleteness path in isolation.
     const fetchCandidates = vi.fn((): Promise<FetchCandidatesResult> => Promise.resolve({ items: [item('1', 'basil')], total: 500 }));
 
     const result = await lookupCandidates(['basil'], fields, 10, fetchCandidates);
 
+    expect(result.matches[0].items).toHaveLength(1);
     expect(result.matches[0].truncated).toBe(true);
   });
 
-  it('does not flag truncation when the chunk returned everything it matched', async () => {
+  it('reports truncated: false when retrieval was complete and no cap was applied', async () => {
     const fetchCandidates = vi.fn((): Promise<FetchCandidatesResult> => Promise.resolve({ items: [item('1', 'basil')], total: 1 }));
 
     const result = await lookupCandidates(['basil'], fields, 10, fetchCandidates);
 
     expect(result.matches[0].truncated).toBe(false);
+  });
+
+  it('reports truncated: false for a query with zero matches', async () => {
+    const fetchCandidates = vi.fn((): Promise<FetchCandidatesResult> => Promise.resolve({ items: [], total: 0 }));
+
+    const result = await lookupCandidates(['nonexistent'], fields, 10, fetchCandidates);
+
+    expect(result.matches[0].items).toEqual([]);
+    expect(result.matches[0].truncated).toBe(false);
+  });
+
+  it('flags only the queries that were actually capped when several queries share one request', async () => {
+    // "pepper" has many more candidates than maxMatchesPerQuery; "garlic" has exactly one.
+    const manyPepperMatches = Array.from({ length: 6 }, (_, i) => item(`p${i}`, `pepper-${i}`));
+    const pool = [...manyPepperMatches, item('g1', 'garlic')];
+    const fetchCandidates = vi.fn((): Promise<FetchCandidatesResult> => Promise.resolve({ items: pool, total: pool.length }));
+
+    const result = await lookupCandidates(['pepper', 'garlic'], fields, 5, fetchCandidates);
+
+    const pepperMatch = result.matches.find((m) => m.query === 'pepper')!;
+    const garlicMatch = result.matches.find((m) => m.query === 'garlic')!;
+    expect(pepperMatch.items).toHaveLength(5);
+    expect(pepperMatch.truncated).toBe(true);
+    expect(garlicMatch.items).toHaveLength(1);
+    expect(garlicMatch.truncated).toBe(false);
+  });
+
+  it('applies the same truncated value to duplicate and case-equivalent input queries', async () => {
+    const many = Array.from({ length: 5 }, (_, i) => item(`${i}`, `pepper-${i}`));
+    const fetchCandidates = vi.fn((): Promise<FetchCandidatesResult> => Promise.resolve({ items: many, total: many.length }));
+
+    const result = await lookupCandidates(['pepper', 'Pepper', 'pepper'], fields, 3, fetchCandidates);
+
+    expect(result.matches).toHaveLength(3);
+    for (const match of result.matches) {
+      expect(match.items).toHaveLength(3);
+      expect(match.truncated).toBe(true);
+    }
+  });
+
+  it('caps correctly when an alias exact match competes with many substring matches', async () => {
+    const substringMatches = Array.from({ length: 5 }, (_, i) => item(`${i}`, `basil-flavored-${i}`));
+    const aliasExact = { id: 'alias-exact', name: 'thai holy basil', aliases: [{ name: 'basil' }] };
+    const pool = [...substringMatches, aliasExact];
+    const fetchCandidates = vi.fn((): Promise<FetchCandidatesResult> => Promise.resolve({ items: pool, total: pool.length }));
+
+    const result = await lookupCandidates(['basil'], fields, 2, fetchCandidates);
+
+    expect(result.matches[0].items).toHaveLength(2);
+    expect(result.matches[0].items[0].id).toBe('alias-exact'); // exact alias match ranked ahead of substrings
+    expect(result.matches[0].truncated).toBe(true);
   });
 });
 
