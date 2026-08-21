@@ -23,6 +23,7 @@ A [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server for [Me
 - **Categories & Tags** — Full CRUD for organizing recipes, including empty-category/tag detection.
 - **Foods** — Full CRUD for the food taxonomy (reusable structured ingredient entities), including alias management and food-label assignment. See [Resolving or Creating a Food](./WORKFLOWS.md#resolving-or-creating-a-food) in Workflows.
 - **Units** — Full CRUD for the ingredient unit vocabulary (e.g. "tablespoon", "cup", "gram"), including alias/abbreviation management and standard-quantity conversion metadata. See [Resolving or Creating a Unit](./WORKFLOWS.md#resolving-or-creating-a-unit) in Workflows.
+- **Batch Food/Unit Candidate Matching** — `get_food_matches`/`get_unit_matches` resolve many already-interpreted food/unit concepts to candidate Mealie entities (including alias matches that plain `get_foods`/`get_units` search misses) in a small, bounded number of requests instead of one search per concept — read-only, and never picks a winner for the caller. See [Resolving Several Foods or Units at Once](./WORKFLOWS.md#resolving-several-foods-or-units-at-once) in Workflows.
 - **Structured Ingredient Writes** — `update_recipe_ingredients` replaces a recipe's complete structured ingredient collection using already-resolved food/unit references, without disturbing any other recipe field. See [Updating Structured Recipe Ingredients](./WORKFLOWS.md#updating-structured-recipe-ingredients) in Workflows.
 - **Batch & Composite Tools** — `get_recipes_batch` and `get_recipes_detailed_batch` for bounded-concurrency recipe lookup, `get_mealplan_with_recipes` for meal plans with embedded recipe data and client-side date filtering, `update_recipe_taxonomy_batch` for bounded-concurrency category/tag updates across many recipes.
 - **Recipe Classification Feed** — `get_recipes_for_classification` is a compact, paginated, read-only feed purpose-built for AI-driven Category/Tag assignment. It avoids the timeouts that batch/detail tools can hit on large recipe sets by filtering with the cheap list endpoint, fetching full detail only for matches with the same bounded-concurrency fetch used above, and paginating with a stable cursor that survives concurrent taxonomy edits. See [Recipe Classification Workflow](./WORKFLOWS.md#recipe-classification-workflow) in Workflows.
@@ -150,7 +151,7 @@ yarn build
 yarn lint
 ```
 
-## Available Tools (58 total)
+## Available Tools (60 total)
 
 ### Recipes (16)
 `get_recipes`, `find_recipes_for_ingredients`, `get_recipe_detailed`, `get_recipe_concise`, `get_recipes_batch`, `get_recipes_detailed_batch`, `get_recipes_for_classification`, `create_recipe`, `patch_recipe`, `update_recipe_ingredients`, `update_recipe_taxonomy`, `update_recipe_taxonomy_batch`, `duplicate_recipe`, `mark_recipe_last_made`, `set_recipe_image_from_url`, `delete_recipe`
@@ -167,11 +168,11 @@ yarn lint
 ### Shopping Lists (13)
 `get_shopping_lists`, `create_shopping_list`, `get_shopping_list`, `update_shopping_list`, `delete_shopping_list`, `add_recipe_to_shopping_list`, `remove_recipe_from_shopping_list`, `get_shopping_list_items`, `create_shopping_list_item`, `create_shopping_list_items_bulk`, `update_shopping_list_item`, `delete_shopping_list_item`, `delete_shopping_list_items_bulk`
 
-### Foods (5)
-`get_foods`, `get_food`, `create_food`, `update_food`, `delete_food`
+### Foods (6)
+`get_foods`, `get_food`, `get_food_matches`, `create_food`, `update_food`, `delete_food`
 
-### Units (5)
-`get_units`, `get_unit`, `create_unit`, `update_unit`, `delete_unit`
+### Units (6)
+`get_units`, `get_unit`, `get_unit_matches`, `create_unit`, `update_unit`, `delete_unit`
 
 ## License
 

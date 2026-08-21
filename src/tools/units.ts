@@ -1,6 +1,12 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import * as unitsApi from '../api/units.js';
+import {
+  MAX_QUERIES_PER_CALL,
+  MAX_QUERY_LENGTH,
+  DEFAULT_MAX_MATCHES_PER_QUERY,
+  MAX_MATCHES_PER_QUERY_CAP,
+} from '../lib/multi-query-lookup.js';
 
 function successResponse(result: unknown) {
   return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] };
@@ -42,11 +48,12 @@ const standardUnitParamSchema = z
 export function registerUnitTools(server: McpServer): void {
   server.tool(
     'get_units',
-    'Search or list canonical Mealie ingredient units (e.g. "tablespoon", "cup", "gram"). Use this after ' +
-      'interpreting an ingredient\'s unit text (e.g. deciding that "tbsp" in "2 tbsp olive oil" means ' +
-      'tablespoon) to resolve the existing Mealie unit and its ID for use with update_recipe_ingredients. ' +
+    'Search or list canonical Mealie ingredient units (e.g. "tablespoon", "cup", "gram") with plain pagination. ' +
+      'Use this after interpreting an ingredient\'s unit text (e.g. deciding that "tbsp" in "2 tbsp olive oil" ' +
+      'means tablespoon) to resolve the existing Mealie unit and its ID for use with update_recipe_ingredients. ' +
       'This tool does not parse ingredient language or infer units from free text — search matches only ' +
-      'against existing unit name, pluralName, abbreviation, and pluralAbbreviation, not aliases.',
+      'against existing unit name, pluralName, abbreviation, and pluralAbbreviation, not aliases. For resolving ' +
+      'several already-interpreted unit concepts at once, and for alias-aware matching, prefer get_unit_matches.',
     {
       search: z
         .string()
@@ -73,6 +80,48 @@ export function registerUnitTools(server: McpServer): void {
     async ({ unitId }) => {
       try {
         const result = await unitsApi.getUnit(unitId);
+        return successResponse(result);
+      } catch (error) {
+        return errorResponse(error);
+      }
+    },
+  );
+
+  server.tool(
+    'get_unit_matches',
+    'Finds existing canonical Mealie unit candidates for multiple already-interpreted unit concepts in one ' +
+      'call, matching against names, plural names, abbreviations, plural abbreviations, and stored aliases ' +
+      '(which get_units\' search does not check). Use after interpreting unit text (e.g. an LLM parsing "2 tbsp ' +
+      'olive oil" into unit=tablespoon) and before calling create_unit, to check whether a matching unit or ' +
+      'alias already exists. Returns ranked candidates per query rather than choosing one — the caller decides ' +
+      'which candidate (if any) to use. Does not parse ingredient text, does not perform fuzzy/semantic ' +
+      'matching, and does not create, update, or otherwise modify any unit or alias.',
+    {
+      queries: z
+        .array(z.string().trim().min(1, 'Queries cannot be blank.').max(MAX_QUERY_LENGTH))
+        .min(1)
+        .max(MAX_QUERIES_PER_CALL)
+        .describe(
+          `Unit concepts to resolve, e.g. ["tablespoon", "ounce", "cup"]. 1-${MAX_QUERIES_PER_CALL} plain ` +
+            'lookup strings (not search syntax) — duplicates (case-insensitive) are resolved once but still ' +
+            'returned once per input entry.',
+        ),
+      maxMatchesPerQuery: z
+        .number()
+        .int()
+        .min(1)
+        .max(MAX_MATCHES_PER_QUERY_CAP)
+        .optional()
+        .describe(
+          `Maximum ranked candidates to return per query (default ${DEFAULT_MAX_MATCHES_PER_QUERY}, capped at ` +
+            `${MAX_MATCHES_PER_QUERY_CAP}). Strongest matches (exact name/pluralName/abbreviation/` +
+            'pluralAbbreviation/alias, then substring matches) are kept first when a query has more candidates ' +
+            'than this.',
+        ),
+    },
+    async ({ queries, maxMatchesPerQuery }) => {
+      try {
+        const result = await unitsApi.getUnitMatches(queries, { maxMatchesPerQuery });
         return successResponse(result);
       } catch (error) {
         return errorResponse(error);
