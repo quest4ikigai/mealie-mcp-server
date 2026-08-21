@@ -12,7 +12,7 @@ vi.mock('../api/client.js', async () => {
 });
 
 import { apiGet, apiPost, apiPut, apiDelete, MealieApiError } from '../api/client.js';
-import { getUnits, getUnit, createUnit, updateUnit, deleteUnit } from '../api/units.js';
+import { getUnits, getUnit, createUnit, updateUnit, deleteUnit, getUnitMatches } from '../api/units.js';
 
 const mockGet = vi.mocked(apiGet);
 const mockPost = vi.mocked(apiPost);
@@ -472,5 +472,84 @@ describe('unit CRUD lifecycle', () => {
     // 7. verify missing
     mockGet.mockRejectedValueOnce(new MealieApiError(404, 'Not Found'));
     await expect(getUnit('lifecycle-unit-1')).rejects.toThrow(/Unit not found/);
+  });
+});
+
+describe('getUnitMatches', () => {
+  function paginatedUnits(items: Record<string, unknown>[], total?: number) {
+    return { items, total: total ?? items.length, page: 1, size: items.length };
+  }
+
+  it('issues one combined queryFilter request for a small batch of queries', async () => {
+    mockGet.mockResolvedValue(paginatedUnits([]));
+
+    await getUnitMatches(['tablespoon', 'ounce', 'cup']);
+
+    expect(mockGet).toHaveBeenCalledTimes(1);
+    const [path, params] = mockGet.mock.calls[0];
+    expect(path).toBe('/api/units');
+    expect(params).toMatchObject({ page: '1', perPage: '200' });
+    expect(params!.queryFilter).toContain('abbreviation LIKE "%tablespoon%"');
+    expect(params!.queryFilter).toContain('pluralAbbreviation LIKE "%ounce%"');
+    expect(params!.queryFilter).toContain('aliases.name LIKE "%cup%"');
+  });
+
+  it('finds a unit by an alias that get_units\' plain search would miss (temporary integration fixture)', async () => {
+    // Mirrors a temporary unit created for Chunk 4a testing: get_units(search=<alias>) returned zero
+    // results even though get_unit(id) showed the alias on the record. This fixture is constructed
+    // in-test rather than depending on that already-deleted manual fixture.
+    const tempUnit = {
+      id: 'temp-unit-1',
+      name: 'integration-test-measure',
+      pluralName: 'integration-test-measures',
+      abbreviation: '',
+      pluralAbbreviation: '',
+      fraction: true,
+      useAbbreviation: false,
+      standardQuantity: null,
+      standardUnit: null,
+      aliases: [{ name: 'special-unit-alias' }],
+    };
+    mockGet.mockResolvedValue(paginatedUnits([tempUnit]));
+
+    const result = await getUnitMatches(['special-unit-alias']);
+
+    expect(result.matches[0].items).toEqual([
+      { ...tempUnit, matchedBy: 'alias', matchType: 'exact', matchedValue: 'special-unit-alias' },
+    ]);
+  });
+
+  it('groups results per input query, preserving duplicates and original order', async () => {
+    mockGet.mockResolvedValue(paginatedUnits([{ id: 'unit-1', name: 'tablespoon', aliases: [] }]));
+
+    const result = await getUnitMatches(['tablespoon', 'nonexistent', 'tablespoon']);
+
+    expect(result.matches.map((m) => m.query)).toEqual(['tablespoon', 'nonexistent', 'tablespoon']);
+    expect(result.matches[0].items).toHaveLength(1);
+    expect(result.matches[1].items).toHaveLength(0);
+    expect(result.matches[2].items).toHaveLength(1);
+  });
+
+  it('propagates a validation error without the generic "Unable to look up" wrapper', async () => {
+    const tooMany = Array.from({ length: 26 }, (_, i) => `q${i}`);
+    await expect(getUnitMatches(tooMany)).rejects.toThrow(/At most 25 queries/);
+    expect(mockGet).not.toHaveBeenCalled();
+  });
+
+  it('does not fail the whole call when the underlying request fails — reports a per-query error instead', async () => {
+    mockGet.mockRejectedValue(new MealieApiError(500, 'Internal Server Error'));
+
+    const result = await getUnitMatches(['tablespoon']);
+
+    expect(result.matches[0].items).toEqual([]);
+    expect(result.matches[0].error).toMatch(/500/);
+  });
+
+  it('never calls create/update/delete endpoints — read-only', async () => {
+    mockGet.mockResolvedValue(paginatedUnits([]));
+    await getUnitMatches(['tablespoon']);
+    expect(mockPost).not.toHaveBeenCalled();
+    expect(mockPut).not.toHaveBeenCalled();
+    expect(mockDelete).not.toHaveBeenCalled();
   });
 });

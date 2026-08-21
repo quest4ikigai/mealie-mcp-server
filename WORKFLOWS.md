@@ -95,7 +95,7 @@ Both tools return the recipe's `id`/`slug` plus, per collection, the `final` lis
 
 Foods are Mealie's reusable structured ingredient entities (e.g. "onion", "chicken breast") — the building blocks that a parsed recipe ingredient eventually points to, as distinct from the free-text ingredient notes on a recipe. Search existing foods before creating a new one: the name you need, or a close alias of it, often already exists, and creating a duplicate fragments the taxonomy.
 
-- `get_foods` — Lists and searches foods (`search`, `page`, `perPage`). The primary tool for resolving a human-readable food name to an existing food ID.
+- `get_foods` — Lists and searches foods (`search`, `page`, `perPage`) for browsing or a single lookup. `search` matches `name`/`pluralName` only — **not** `aliases`. For resolving several already-interpreted food concepts at once, and for alias-aware matching, use `get_food_matches` instead — see [Resolving Several Foods or Units at Once](#resolving-several-foods-or-units-at-once) below.
 - `get_food` — Retrieves a single food by ID, including its aliases and label.
 - `create_food` — Creates a food. Supports assigning aliases (`aliases: string[]`) and an existing food label (`labelId`) at creation time.
 - `update_food` — Updates a food's `name`, `pluralName`, `description`, `aliases`, and/or `labelId`. Omitted fields keep their current value.
@@ -166,6 +166,49 @@ Units are Mealie's canonical ingredient unit vocabulary (e.g. "tablespoon", "cup
 }
 // -> update_recipe_ingredients
 ```
+
+## Resolving Several Foods or Units at Once
+
+`get_food_matches` and `get_unit_matches` resolve a **batch** of already-interpreted food/unit concepts to candidate Mealie entities in one call, using a small, bounded number of Mealie requests instead of one `get_foods`/`get_units` search per concept. This is the tool to reach for once an LLM has parsed a batch of ingredient lines and needs to resolve every concept it identified — e.g. parsing `"2 tbsp olive oil"`, `"3 cloves garlic"`, and `"1 cup broccoli"` into food concepts `["olive oil", "garlic", "broccoli"]` and unit concepts `["tablespoon", "clove", "cup"]` is 2 tool calls with `get_food_matches`/`get_unit_matches` instead of 5 separate `get_foods`/`get_units` searches.
+
+**How this differs from `get_foods`/`get_units`:**
+
+| | `get_foods` / `get_units` | `get_food_matches` / `get_unit_matches` |
+|---|---|---|
+| Purpose | Browse or a single search | Resolve several already-interpreted concepts at once |
+| Aliases | Not matched by `search` | Matched, with `matchedBy: "alias"` reported |
+| Result shape | A flat paginated page | Candidates grouped per input query |
+| Picks a winner? | N/A | Never — always returns ranked candidates, caller decides |
+
+**What they do NOT do:** parse ingredient text, perform fuzzy/semantic matching, or create/update/delete any food, unit, or alias. By the time you call these tools you've already decided what concepts to look up — these tools only retrieve existing canonical candidates for concepts you've already identified.
+
+**Matching.** Each query is checked against the candidate's canonical fields and its aliases, using plain trimmed/case-insensitive string comparison — never fuzzy or semantic matching. Every candidate that exact-matches or contains the query on any checked field is returned (never just one "best" answer); results are ranked with exact matches ahead of substring matches, and within each of those groups, `name` ahead of `pluralName` ahead of (for units) `abbreviation`/`pluralAbbreviation` ahead of `alias`. Each candidate reports `matchedBy` (which field matched), `matchType` (`"exact"` or `"substring"`), and `matchedValue` (the actual stored text that matched — e.g. the alias text, not the query).
+
+**Example workflow — resolve a batch of parsed ingredient concepts:**
+
+```json
+// The calling LLM has already parsed several ingredient lines and identified the concepts below —
+// these tools never parse ingredient text themselves.
+
+// 1. Resolve every food concept identified across the batch, in one call
+{ "queries": ["olive oil", "garlic", "broccoli"] }
+// -> get_food_matches
+// -> { "matches": [
+//      { "query": "olive oil", "items": [{ "id": "f04a...", "name": "olive oil", "matchedBy": "name", "matchType": "exact", ... }] },
+//      { "query": "garlic", "items": [{ "id": "...", "name": "garlic", "matchedBy": "name", "matchType": "exact", ... }] },
+//      { "query": "broccoli", "items": [] }  // no existing food — the LLM may now call create_food
+//    ], "queryCount": 3, "matchedCount": 2, "apiRequestCount": 1 }
+
+// 2. Resolve every unit concept identified across the batch, in one call
+{ "queries": ["tablespoon", "clove", "cup"] }
+// -> get_unit_matches
+
+// 3. The calling LLM picks the appropriate candidate (or creates one) per concept, then writes the
+//    resolved ingredients in one call
+// -> update_recipe_ingredients
+```
+
+Both tools accept an optional `maxMatchesPerQuery` (default 10) to cap how many ranked candidates come back per query, and enforce a maximum number of queries per call (25) to keep each underlying request bounded. Passing the same query twice (case-insensitively) does not cost an extra Mealie request — it's resolved once and returned once per input entry, preserving the input order. A failure to look up one particular batch of queries does not discard matches already found for the rest of the batch — the affected entries carry an `error` field instead of `items`.
 
 ## Updating Structured Recipe Ingredients
 
