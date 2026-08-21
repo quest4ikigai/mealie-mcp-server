@@ -464,6 +464,54 @@ describe('getFoodMatches', () => {
   });
 });
 
+describe('getFoodMatches — truncated regression (live "pepper" report)', () => {
+  function paginatedFoods(items: Record<string, unknown>[]) {
+    return { items, total: items.length, page: 1, size: items.length };
+  }
+
+  // Live report: get_food_matches({ queries: ["pepper"], maxMatchesPerQuery: 1 or 5 }) returned
+  // truncated: false even though get_foods(search: "pepper") shows 49 total matches — `truncated` was
+  // only tracking whether Mealie's own response page was cut short, not whether this tool's own
+  // maxMatchesPerQuery cap discarded candidates it already had ranked locally.
+  const manyPepperFoods = Array.from({ length: 49 }, (_, i) => ({
+    id: `pepper-${i}`,
+    name: i === 0 ? 'black pepper' : `pepper variety ${i}`,
+    aliases: [],
+  }));
+
+  it('reports truncated: true when more candidates were found than maxMatchesPerQuery, even though the full set was retrieved in one page', async () => {
+    mockGet.mockResolvedValue(paginatedFoods(manyPepperFoods)); // total === items.length: retrieval itself was complete
+
+    const result = await getFoodMatches(['pepper'], { maxMatchesPerQuery: 1 });
+
+    expect(result.matches[0].items).toHaveLength(1);
+    expect(result.matches[0].items[0].name).toBe('black pepper');
+    expect(result.matches[0].truncated).toBe(true);
+
+    const resultFive = await getFoodMatches(['pepper'], { maxMatchesPerQuery: 5 });
+    expect(resultFive.matches[0].items).toHaveLength(5);
+    expect(resultFive.matches[0].truncated).toBe(true);
+  });
+
+  it('reports truncated: false when the candidate count exactly equals maxMatchesPerQuery', async () => {
+    mockGet.mockResolvedValue(paginatedFoods(manyPepperFoods.slice(0, 5)));
+
+    const result = await getFoodMatches(['pepper'], { maxMatchesPerQuery: 5 });
+
+    expect(result.matches[0].items).toHaveLength(5);
+    expect(result.matches[0].truncated).toBe(false);
+  });
+
+  it('reports truncated: false when the candidate count is below maxMatchesPerQuery', async () => {
+    mockGet.mockResolvedValue(paginatedFoods(manyPepperFoods.slice(0, 2)));
+
+    const result = await getFoodMatches(['pepper'], { maxMatchesPerQuery: 5 });
+
+    expect(result.matches[0].items).toHaveLength(2);
+    expect(result.matches[0].truncated).toBe(false);
+  });
+});
+
 describe('getFoodMatches — input sanitization', () => {
   function paginatedFoods(items: Record<string, unknown>[]) {
     return { items, total: items.length, page: 1, size: items.length };

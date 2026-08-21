@@ -78,8 +78,11 @@ export function registerFoodTools(server: McpServer): void {
       'foods an ingredient refers to (e.g. an LLM parsing "2 tbsp chopped fresh parsley" into unit=tablespoon, ' +
       'food=parsley) and before calling create_food, to check whether a matching food or alias already exists. ' +
       'Returns ranked candidates per query rather than choosing one — the caller decides which candidate (if ' +
-      'any) to use. Does not parse ingredient text, does not perform fuzzy/semantic matching, and does not ' +
-      'create, update, or otherwise modify any food or alias.',
+      'any) to use. Each query\'s result includes truncated: true when additional matching candidates may ' +
+      'exist beyond the returned items (either because there were more than maxMatchesPerQuery, or because ' +
+      'Mealie\'s own retrieval for that query was itself incomplete) — narrow the query text or raise ' +
+      'maxMatchesPerQuery if that matters for a given lookup. Does not parse ingredient text, does not ' +
+      'perform fuzzy/semantic matching, and does not create, update, or otherwise modify any food or alias.',
     {
       queries: z
         .array(z.string().trim().min(1, 'Queries cannot be blank.').max(MAX_QUERY_LENGTH))

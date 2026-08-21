@@ -553,3 +553,39 @@ describe('getUnitMatches', () => {
     expect(mockDelete).not.toHaveBeenCalled();
   });
 });
+
+describe('getUnitMatches — truncated regression', () => {
+  function paginatedUnits(items: Record<string, unknown>[]) {
+    return { items, total: items.length, page: 1, size: items.length };
+  }
+
+  // Mirrors the get_food_matches "pepper" live regression: a unit candidate set larger than
+  // maxMatchesPerQuery must report truncated: true even when Mealie's own response was complete
+  // (total === items.length), since get_unit_matches shares the same lookupCandidates engine.
+  const manySpoonUnits = Array.from({ length: 8 }, (_, i) => ({
+    id: `spoon-${i}`,
+    name: i === 0 ? 'tablespoon' : `spoon variety ${i}`,
+    pluralName: '',
+    abbreviation: '',
+    pluralAbbreviation: '',
+    aliases: [],
+  }));
+
+  it('reports truncated: true when more candidates were found than maxMatchesPerQuery', async () => {
+    mockGet.mockResolvedValue(paginatedUnits(manySpoonUnits));
+
+    const result = await getUnitMatches(['spoon'], { maxMatchesPerQuery: 3 });
+
+    expect(result.matches[0].items).toHaveLength(3);
+    expect(result.matches[0].truncated).toBe(true);
+  });
+
+  it('reports truncated: false when the candidate count does not exceed maxMatchesPerQuery', async () => {
+    mockGet.mockResolvedValue(paginatedUnits(manySpoonUnits.slice(0, 3)));
+
+    const result = await getUnitMatches(['spoon'], { maxMatchesPerQuery: 3 });
+
+    expect(result.matches[0].items).toHaveLength(3);
+    expect(result.matches[0].truncated).toBe(false);
+  });
+});
