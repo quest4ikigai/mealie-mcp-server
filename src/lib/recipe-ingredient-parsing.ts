@@ -59,6 +59,15 @@ export class InvalidLimitError extends SharedInvalidLimitError {
  */
 export type IngredientParsingQueryState = 'unparsed_only' | 'partially_parsed' | 'any';
 
+const INGREDIENT_PARSING_QUERY_STATES: readonly IngredientParsingQueryState[] = ['unparsed_only', 'partially_parsed', 'any'];
+
+export class InvalidStateError extends Error {
+  constructor(state: unknown) {
+    super(`state must be one of ${INGREDIENT_PARSING_QUERY_STATES.map((s) => `"${s}"`).join(', ')} (got ${JSON.stringify(state)}).`);
+    this.name = 'InvalidStateError';
+  }
+}
+
 /**
  * Deterministic, schema-only classification of a single ingredient row. Mealie's RecipeIngredient
  * schema (confirmed against a live instance) exposes no explicit "isFood"/"disableAmount"/
@@ -283,6 +292,14 @@ function validateLimit(limit: number | undefined): number {
   return limit;
 }
 
+function validateState(state: IngredientParsingQueryState | undefined): IngredientParsingQueryState {
+  if (state === undefined) return INGREDIENT_PARSING_DEFAULT_STATE;
+  if (!INGREDIENT_PARSING_QUERY_STATES.includes(state)) {
+    throw new InvalidStateError(state);
+  }
+  return state;
+}
+
 async function pullBatch(iterator: AsyncGenerator<ScannedRecipe, void, undefined>, size: number): Promise<ScannedRecipe[]> {
   const batch: ScannedRecipe[] = [];
   for (let i = 0; i < size; i++) {
@@ -318,7 +335,7 @@ export async function getRecipesForIngredientParsing(
   clock: ClockOptions = {},
 ): Promise<IngredientParsingPage> {
   const limit = validateLimit(input.limit);
-  const state = input.state ?? INGREDIENT_PARSING_DEFAULT_STATE;
+  const state = validateState(input.state);
   const startCursor = input.cursor ? decodeCursor(input.cursor) : null;
 
   const now = clock.now ?? Date.now;

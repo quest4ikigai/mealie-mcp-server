@@ -306,15 +306,31 @@ Pass back `nextCursor` from the previous response unchanged:
 
 ## Ingredient Parsing Workflow
 
-`get_recipes_for_ingredient_parsing` is a compact, paginated, **READ-ONLY** work queue of recipes whose ingredients may still need structured parsing — the ingredient-parsing counterpart to `get_recipes_for_classification`. It never modifies a recipe, food, alias, or ingredient, and it never parses ingredient text itself: it does not call Mealie's NLP ingredient parser, does not guess a food/unit association, and does not decide linguistically whether a line "contains a unit". Interpreting free-form ingredient text (e.g. `"2 tablespoons chopped fresh parsley leaves"` → quantity `2`, unit `tablespoon`, food `parsley`, note `"chopped fresh"`) is entirely the calling model's responsibility.
+`get_recipes_for_ingredient_parsing` is a compact, paginated, **READ-ONLY** work queue of recipes whose ingredients may still need structured parsing — the ingredient-parsing counterpart to `get_recipes_for_classification`. It never modifies a recipe, food, unit, alias, or ingredient, and it never parses ingredient text itself: it does not call Mealie's NLP ingredient parser, does not guess a food/unit association, and does not decide linguistically whether a line "contains a unit". Interpreting free-form ingredient text (e.g. `"2 tablespoons chopped fresh parsley leaves"` → quantity `2`, unit `tablespoon`, food `parsley`, note `"chopped fresh"`) is entirely the calling model's responsibility.
+
+Conceptually:
+
+```
+get_recipes_for_ingredient_parsing
+    ->
+model interprets ingredients (using recipe + instruction context)
+    ->
+get_food_matches / get_unit_matches
+    ->
+model selects canonical entities (or decides a new food/unit is needed)
+    ->
+update_recipe_ingredients
+```
+
+This document covers only the first step — the read-only work queue. The detailed rules a model should use to interpret ingredient text (splitting, combining, alternatives, etc.) are intentionally not defined here; that policy lives elsewhere and this tool has no opinion on it.
 
 The intended workflow:
 
 1. Call `get_recipes_for_ingredient_parsing` to get a page of recipes needing attention.
-2. For each ingredient, interpret its existing text (`display`/`note`/`originalText`) yourself — the MCP does not do this.
-3. Resolve canonical food/unit IDs separately with `get_foods`/`get_food` (see [Resolving or Creating a Food](#resolving-or-creating-a-food) above) or Mealie's unit endpoints. This tool never looks up or creates foods/units.
-4. Decide whether a new food or alias is warranted (this tool has no opinion on that).
-5. Call `update_recipe_ingredients` (see [Updating Structured Recipe Ingredients](#updating-structured-recipe-ingredients) above) with the recipe's **complete** corrected ingredient collection, preserving each ingredient's existing `referenceId` — recipe instructions may reference ingredients by it, and this tool never generates new ones.
+2. For each ingredient, interpret its existing text (`display`/`note`/`originalText`) yourself — the MCP does not do this. Recipe instructions are included for exactly this: they can disambiguate an otherwise-ambiguous line.
+3. Resolve canonical food/unit IDs separately with `get_food_matches`/`get_unit_matches` (see [Resolving Several Foods or Units at Once](#resolving-several-foods-or-units-at-once) above) — batch, alias-aware lookups purpose-built for this step. This tool never looks up or creates foods/units itself.
+4. Decide whether a new food, unit, or alias is warranted (this tool has no opinion on that).
+5. Call `update_recipe_ingredients` (see [Updating Structured Recipe Ingredients](#updating-structured-recipe-ingredients) above) with the recipe's **complete** corrected ingredient collection. Existing `referenceId`s are stable identifiers that recipe instructions may reference — preserve one when an existing ingredient row continues to represent the same ingredient.
 6. Continue calling `get_recipes_for_ingredient_parsing` with `nextCursor` until `hasMore` is `false`.
 
 ### Arguments
