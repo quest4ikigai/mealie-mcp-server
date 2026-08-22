@@ -14,9 +14,11 @@ vi.mock('../api/recipes.js', () => ({
 }));
 
 import * as recipesApi from '../api/recipes.js';
+import { DEFAULT_DETAIL_FETCH_CONCURRENCY } from '../lib/concurrency.js';
 import {
   getRecipesForIngredientParsing,
   InvalidLimitError,
+  InvalidStateError,
   InvalidCursorError,
   INGREDIENT_PARSING_DEFAULT_LIMIT,
   INGREDIENT_PARSING_MAX_LIMIT,
@@ -228,6 +230,67 @@ describe('state filtering', () => {
 
     expect(result.items).toHaveLength(1);
   });
+
+  it('returns an empty page (not an error) when no recipe matches the requested state', async () => {
+    const r1 = recipe(1, [structuredIngredient()]);
+    const r2 = recipe(2, [structuredIngredient()]);
+    setupServer([r1.summary, r2.summary], { [r1.detail.slug as string]: r1.detail, [r2.detail.slug as string]: r2.detail });
+
+    const result = await getRecipesForIngredientParsing({ state: 'unparsed_only' });
+
+    expect(result.items).toEqual([]);
+    expect(result.failures).toEqual([]);
+    expect(result.scannedCount).toBe(2);
+    expect(result.returnedCount).toBe(0);
+    expect(result.hasMore).toBe(false);
+    expect(result.nextCursor).toBeNull();
+  });
+
+  it('returns only the matching recipes from a mix of matching and non-matching recipes, in scan order', async () => {
+    const r1 = recipe(1, [unparsedIngredient()]); // match
+    const r2 = recipe(2, [structuredIngredient()]); // no match
+    const r3 = recipe(3, [unparsedIngredient()]); // match
+    const r4 = recipe(4, [structuredIngredient(), partialIngredient()]); // no match under unparsed_only
+    const r5 = recipe(5, [unparsedIngredient()]); // match
+    const all = [r1, r2, r3, r4, r5];
+    setupServer(
+      all.map((r) => r.summary),
+      Object.fromEntries(all.map((r) => [r.detail.slug as string, r.detail])),
+    );
+
+    const result = await getRecipesForIngredientParsing({ state: 'unparsed_only' });
+
+    expect(result.items.map((i) => i.slug)).toEqual(['recipe-1', 'recipe-3', 'recipe-5']);
+    expect(result.scannedCount).toBe(5);
+  });
+});
+
+describe('legacy ingredient fidelity', () => {
+  it('exposes the stored note/display verbatim and does not fabricate originalText for a legacy unparsed row', async () => {
+    // Real-world shape: an older import stored the raw ingredient line in note/display and never
+    // populated originalText — the tool must report exactly what's stored, not invent provenance.
+    const r1 = recipe(1, [
+      {
+        referenceId: 'ref-legacy',
+        quantity: 0,
+        unit: null,
+        food: null,
+        note: '2 tablespoons chopped parsley',
+        display: '2 tablespoons chopped parsley',
+        originalText: null,
+        title: null,
+      },
+    ]);
+    setupServer([r1.summary], { [r1.detail.slug as string]: r1.detail });
+
+    const result = await getRecipesForIngredientParsing({});
+    const ing = result.items[0].ingredients[0];
+
+    expect(ing.note).toBe('2 tablespoons chopped parsley');
+    expect(ing.display).toBe('2 tablespoons chopped parsley');
+    expect(ing.originalText).toBeNull();
+    expect(ing.parsingState).toBe('unparsed');
+  });
 });
 
 describe('per-ingredient parsingState classification', () => {
@@ -264,6 +327,53 @@ describe('per-ingredient parsingState classification', () => {
     const result = await getRecipesForIngredientParsing({ state: 'any' });
 
     expect(result.items[0].ingredients[0].parsingState).toBe('structured');
+  });
+
+  it('treats a food/unit field that is entirely absent from the source the same as an explicit null', async () => {
+    const r1 = recipe(1, [
+      { referenceId: 'ref-absent', quantity: 2, note: '', display: '', title: null }, // food/unit/originalText keys omitted entirely
+    ]);
+    setupServer([r1.summary], { [r1.detail.slug as string]: r1.detail });
+
+    const result = await getRecipesForIngredientParsing({ state: 'any' });
+    const ing = result.items[0].ingredients[0];
+
+    expect(ing.food).toBeNull();
+    expect(ing.unit).toBeNull();
+    expect(ing.originalText).toBeNull();
+    expect(ing.parsingState).toBe('unparsed'); // absent food is indistinguishable from null food
+  });
+
+  describe('recipe-level count invariants', () => {
+    const cases: { name: string; ingredients: Record<string, unknown>[] }[] = [
+      { name: 'empty ingredient list', ingredients: [] },
+      { name: 'single unparsed ingredient', ingredients: [unparsedIngredient()] },
+      {
+        name: 'one of each state',
+        ingredients: [sectionIngredient(), unparsedIngredient(), partialIngredient(), structuredIngredient()],
+      },
+      {
+        name: 'several of the same state',
+        ingredients: [
+          structuredIngredient({ referenceId: 'a' }),
+          structuredIngredient({ referenceId: 'b' }),
+          partialIngredient({ referenceId: 'c' }),
+          partialIngredient({ referenceId: 'd' }),
+          partialIngredient({ referenceId: 'e' }),
+        ],
+      },
+    ];
+
+    it.each(cases)('counts sum to totalCount for: $name', async ({ ingredients }) => {
+      const r1 = recipe(1, ingredients);
+      setupServer([r1.summary], { [r1.detail.slug as string]: r1.detail });
+
+      const result = await getRecipesForIngredientParsing({ state: 'any' });
+      const counts = result.items[0].ingredientParsingState;
+
+      expect(counts.totalCount).toBe(ingredients.length);
+      expect(counts.unparsedCount + counts.partialCount + counts.structuredCount + counts.sectionCount).toBe(counts.totalCount);
+    });
   });
 });
 
@@ -362,6 +472,15 @@ describe('instruction context', () => {
       { id: 'i2', title: '', text: 'Saute the onions', ingredientReferences: [] },
     ]);
   });
+
+  it('omits the id field entirely when the source instruction has none, rather than a blank string', async () => {
+    const r1 = recipe(1, [unparsedIngredient()], [{ title: '', text: 'Mix well', ingredientReferences: [] }]);
+    setupServer([r1.summary], { [r1.detail.slug as string]: r1.detail });
+
+    const result = await getRecipesForIngredientParsing({});
+
+    expect(result.items[0].instructions[0]).not.toHaveProperty('id');
+  });
 });
 
 describe('limit validation', () => {
@@ -412,6 +531,15 @@ describe('limit validation', () => {
 
   it('rejects a non-integer limit', async () => {
     await expect(getRecipesForIngredientParsing({ limit: 3.5 })).rejects.toThrow(InvalidLimitError);
+  });
+});
+
+describe('state validation', () => {
+  it('rejects an unknown state value before making any Mealie API call', async () => {
+    await expect(getRecipesForIngredientParsing({ state: 'bogus' as never })).rejects.toThrow(InvalidStateError);
+
+    expect(mockGetRecipes).not.toHaveBeenCalled();
+    expect(mockGetRecipe).not.toHaveBeenCalled();
   });
 });
 
@@ -493,6 +621,145 @@ describe('pagination', () => {
     expect(result.items[29].slug).toBe('recipe-54');
     expect(mockGetRecipes).toHaveBeenCalledWith(expect.objectContaining({ page: 2 }));
   });
+
+  it('accepts a cursor issued under a different state — cursors are a pure scan position, not tied to a query filter', async () => {
+    const items = Array.from({ length: 4 }, (_, i) => recipe(i, [unparsedIngredient()]));
+    setupServer(
+      items.map((r) => r.summary),
+      Object.fromEntries(items.map((r) => [r.detail.slug as string, r.detail])),
+    );
+
+    const page1 = await getRecipesForIngredientParsing({ state: 'any', limit: 2 });
+    expect(page1.items.map((i) => i.slug)).toEqual(['recipe-0', 'recipe-1']);
+
+    // Continue the same cursor but under a different state filter — must not error or restart the scan.
+    const page2 = await getRecipesForIngredientParsing({ state: 'unparsed_only', limit: 2, cursor: page1.nextCursor! });
+    expect(page2.items.map((i) => i.slug)).toEqual(['recipe-2', 'recipe-3']);
+    // hasMore is true here because the limit was hit exactly on the last item — the scan never
+    // looked ahead to discover the collection is actually exhausted; a third call would confirm
+    // that with an empty page. That's expected, not a bug.
+    const page3 = await getRecipesForIngredientParsing({ state: 'unparsed_only', limit: 2, cursor: page2.nextCursor! });
+    expect(page3.items).toEqual([]);
+    expect(page3.hasMore).toBe(false);
+  });
+
+  it('does not skip a recipe whose ingredients change between calls (simulated concurrent edit)', async () => {
+    // A, C, E are unparsed; B, D are already fully structured.
+    const dataset = [
+      recipe(1, [unparsedIngredient()]), // A - matches
+      recipe(2, [structuredIngredient()]), // B - no match
+      recipe(3, [unparsedIngredient()]), // C - matches (will be "parsed" by another client before page 2)
+      recipe(4, [structuredIngredient()]), // D - no match
+      recipe(5, [unparsedIngredient()]), // E - matches
+    ];
+    setupServer(
+      dataset.map((r) => r.summary),
+      Object.fromEntries(dataset.map((r) => [r.detail.slug as string, r.detail])),
+    );
+
+    const page1 = await getRecipesForIngredientParsing({ limit: 2 });
+    expect(page1.items.map((i) => i.slug)).toEqual(['recipe-1', 'recipe-3']);
+    expect(page1.scannedCount).toBe(3); // A, B, C scanned; B filtered out
+    expect(page1.hasMore).toBe(true);
+
+    // Simulate recipe-3 (C) being fully parsed by another client in between calls.
+    dataset[2].detail.recipeIngredient = [structuredIngredient()];
+
+    const page2 = await getRecipesForIngredientParsing({ limit: 2, cursor: page1.nextCursor! });
+    expect(page2.items.map((i) => i.slug)).toEqual(['recipe-5']);
+    expect(page2.scannedCount).toBe(2); // D, E scanned; C is never re-visited or re-matched
+    expect(page2.hasMore).toBe(false);
+
+    // Across both calls every recipe was scanned exactly once: no skips, no duplicates.
+    expect(page1.scannedCount + page2.scannedCount).toBe(dataset.length);
+  });
+});
+
+describe('time budget', () => {
+  it('returns a partial page with hasMore:true and a valid cursor when the time budget is exhausted mid-scan', async () => {
+    // More recipes than fit in one internal detail-fetch batch, so an immediately-expired
+    // deadline (deadlineMs: -1) forces the scan to stop after the first batch rather than
+    // draining the whole collection.
+    const items = Array.from({ length: 45 }, (_, i) => recipe(i, [unparsedIngredient()]));
+    setupServer(
+      items.map((r) => r.summary),
+      Object.fromEntries(items.map((r) => [r.detail.slug as string, r.detail])),
+    );
+
+    const result = await getRecipesForIngredientParsing({ state: 'any', limit: 45 }, { now: () => 0, deadlineMs: -1 });
+
+    expect(result.hasMore).toBe(true);
+    expect(result.nextCursor).toBeTruthy();
+    expect(result.scannedCount).toBeGreaterThan(0);
+    expect(result.scannedCount).toBeLessThan(items.length); // proves it actually stopped early, not just ran out of data
+    expect(result.items.length).toBe(result.scannedCount); // state: 'any' -> every scanned recipe matched
+  });
+
+  it('continuing from a deadline-truncated cursor completes the scan without skipping or duplicating recipes', async () => {
+    const items = Array.from({ length: 45 }, (_, i) => recipe(i, [unparsedIngredient()]));
+    setupServer(
+      items.map((r) => r.summary),
+      Object.fromEntries(items.map((r) => [r.detail.slug as string, r.detail])),
+    );
+
+    const page1 = await getRecipesForIngredientParsing({ state: 'any', limit: 45 }, { now: () => 0, deadlineMs: -1 });
+    expect(page1.hasMore).toBe(true);
+
+    // Resume with a real (generous) deadline so the rest of the collection can drain in one call.
+    const page2 = await getRecipesForIngredientParsing({ state: 'any', limit: 45, cursor: page1.nextCursor! });
+    expect(page2.hasMore).toBe(false);
+
+    const allSlugs = [...page1.items.map((i) => i.slug), ...page2.items.map((i) => i.slug)];
+    expect(allSlugs).toHaveLength(45);
+    expect(new Set(allSlugs).size).toBe(45); // no duplicates
+    expect(allSlugs).toEqual(items.map((r) => r.detail.slug)); // no gaps, correct order
+  });
+});
+
+describe('detail-fetch concurrency', () => {
+  it('bounds concurrent recipe detail requests instead of firing them all at once', async () => {
+    const items = Array.from({ length: 12 }, (_, i) => recipe(i, [unparsedIngredient()]));
+    setupServer(
+      items.map((r) => r.summary),
+      {},
+    );
+
+    let inFlight = 0;
+    let maxInFlight = 0;
+    mockGetRecipe.mockImplementation(async (slug: string) => {
+      inFlight++;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      inFlight--;
+      const found = items.find((r) => r.detail.slug === slug);
+      if (!found) return Promise.reject(new Error(`not found: ${slug}`));
+      return found.detail;
+    });
+
+    const result = await getRecipesForIngredientParsing({ state: 'any', limit: 12 });
+
+    expect(result.items).toHaveLength(12);
+    expect(maxInFlight).toBeGreaterThan(1);
+    expect(maxInFlight).toBeLessThanOrEqual(DEFAULT_DETAIL_FETCH_CONCURRENCY);
+  });
+});
+
+describe('sparse queue', () => {
+  it('finds a single sparse match among many non-matching recipes', async () => {
+    const items = Array.from({ length: 20 }, (_, i) =>
+      i === 17 ? recipe(i, [unparsedIngredient()]) : recipe(i, [structuredIngredient()]),
+    );
+    setupServer(
+      items.map((r) => r.summary),
+      Object.fromEntries(items.map((r) => [r.detail.slug as string, r.detail])),
+    );
+
+    const result = await getRecipesForIngredientParsing({ state: 'unparsed_only' });
+
+    expect(result.items.map((i) => i.slug)).toEqual(['recipe-17']);
+    expect(result.scannedCount).toBe(20); // had to scan the whole sparse collection to find the one match
+    expect(result.hasMore).toBe(false);
+  });
 });
 
 describe('failure isolation', () => {
@@ -512,6 +779,24 @@ describe('failure isolation', () => {
     expect(result.failures[0].slug).toBe('recipe-2');
     expect(result.failures[0].id).toBe('id-2');
     expect(result.failures[0].error).toContain('recipe-2');
+
+    // The failed recipe still counts as scanned (its scan position must not be lost/re-visited),
+    // but never as a returned match, and the cursor is still usable to continue.
+    expect(result.scannedCount).toBe(3);
+    expect(result.returnedCount).toBe(2);
+    expect(result.hasMore).toBe(false);
+    expect(result.nextCursor).toBeNull();
+  });
+
+  it('a recipe with a failed detail fetch is not counted as a match even under state: "any"', async () => {
+    const r1 = recipe(1, [unparsedIngredient()]);
+    setupServer([r1.summary], {}); // detail fetch always rejects (not found)
+
+    const result = await getRecipesForIngredientParsing({ state: 'any' });
+
+    expect(result.items).toEqual([]);
+    expect(result.failures).toHaveLength(1);
+    expect(result.returnedCount).toBe(0);
   });
 });
 

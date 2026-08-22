@@ -130,4 +130,16 @@ describe('get_recipes_for_ingredient_parsing tool', () => {
     expect(response.isError).toBe(true);
     expect(response.content[0].text).toMatch(/500/);
   });
+
+  it('surfaces an invalid state error as an error response, not a crash', async () => {
+    mockGetRecipesForIngredientParsing.mockRejectedValue(
+      new Error('state must be one of "unparsed_only", "partially_parsed", "any" (got "bogus").'),
+    );
+
+    const handler = handlers.get('get_recipes_for_ingredient_parsing')!;
+    const response = await handler({ state: 'bogus' });
+
+    expect(response.isError).toBe(true);
+    expect(response.content[0].text).toMatch(/state must be one of/);
+  });
 });
