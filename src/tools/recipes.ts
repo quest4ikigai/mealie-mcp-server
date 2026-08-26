@@ -492,7 +492,7 @@ export function registerRecipeTools(server: McpServer) {
     },
   );
 
-  // @endpoints PATCH /api/recipes/{slug}
+  // @endpoints GET /api/recipes/{slug}, PATCH /api/recipes/{slug}
   server.tool(
     'update_recipe_ingredients',
     'Replaces the complete structured ingredient collection (recipeIngredient) of an existing recipe, leaving ' +
@@ -508,7 +508,13 @@ export function registerRecipeTools(server: McpServer) {
       'an empty array clears all ingredients. Call get_recipe_detailed first to see the recipe\'s current ' +
       'ingredients, referenceIds, and other fields before replacing them. Note: each ingredient\'s "display" ' +
       'field is never actually persisted by Mealie — it is always recomputed from quantity/unit/food/note, ' +
-      'regardless of what is supplied here.',
+      'regardless of what is supplied here. Integrity check: after writing, the recipe Mealie returns is ' +
+      'verified — for every ingredient that supplied a foodId/unitId, the persisted food/unit must still be ' +
+      'non-null, match the given id, and match the given name (case-insensitive against name/pluralName, plus ' +
+      'abbreviation/pluralAbbreviation for units). If verification fails (e.g. a nonexistent or mismatched ' +
+      'foodId/unitId that Mealie silently dropped or resolved to the wrong entity), the recipe is restored to ' +
+      'its pre-write state on a best-effort basis and this call reports failure — never a silent partial ' +
+      'write. Verification adds no extra request on success; a failed write adds one rollback request.',
     {
       slug: z.string().describe('Slug of the recipe to update.'),
       ingredients: z
@@ -529,7 +535,7 @@ export function registerRecipeTools(server: McpServer) {
     },
   );
 
-  // @endpoints PATCH /api/recipes/{slug}
+  // @endpoints GET /api/recipes/{slug}, PATCH /api/recipes/{slug}
   server.tool(
     'update_recipe_ingredients_batch',
     'Runs update_recipe_ingredients for multiple recipes with bounded concurrency (5 at a time). Use this ' +
@@ -539,14 +545,18 @@ export function registerRecipeTools(server: McpServer) {
       'applied independently per entry: each item\'s "ingredients" is that recipe\'s complete new ' +
       'recipeIngredient list (not a patch — any ingredient omitted is removed), foodId/unitId must already ' +
       'reference existing Mealie entities (this tool never looks up, matches, or creates foods/units), and ' +
-      'referenceIds are preserved exactly as supplied. There is no cross-recipe transaction: recipes are ' +
-      'processed independently, a failure on one (a 404/422/502 from Mealie, or a local validation error like ' +
-      'a mismatched foodId/foodName) does not stop or roll back the others, and the response reports a ' +
-      'success/failure result per recipe in the same order submitted. The whole call is rejected before any ' +
-      `write starts only for a true request-shape problem — an empty batch, more than ` +
-      `${RECIPE_INGREDIENTS_BATCH_MAX_SIZE} recipes, a missing slug, or the same slug repeated in one call. ` +
-      'The same recipeInstructions-id-regeneration caveat as update_recipe_ingredients applies to every ' +
-      'recipe touched here (instruction content is preserved, only ids churn).',
+      'referenceIds are preserved exactly as supplied. Same post-write integrity verification and best-effort ' +
+      'rollback as the singular tool applies independently per recipe: a verification failure on one recipe ' +
+      'restores only that recipe and is reported in its own result entry (error.rollbackSucceeded, plus ' +
+      'error.rollbackError if the restore itself failed) — it never affects siblings. There is no cross-recipe ' +
+      'transaction: recipes are processed independently, a failure on one (a 404/422/502 from Mealie, a local ' +
+      'validation error like a mismatched foodId/foodName, or a verification failure) does not stop or roll ' +
+      'back the others, and the response reports a success/failure result per recipe in the same order ' +
+      'submitted. The whole call is rejected before any write starts only for a true request-shape problem — ' +
+      `an empty batch, more than ${RECIPE_INGREDIENTS_BATCH_MAX_SIZE} recipes, a missing slug, or the same ` +
+      'slug repeated in one call. The same recipeInstructions-id-regeneration caveat as ' +
+      'update_recipe_ingredients applies to every recipe touched here (instruction content is preserved, only ' +
+      'ids churn).',
     {
       updates: z
         .array(
