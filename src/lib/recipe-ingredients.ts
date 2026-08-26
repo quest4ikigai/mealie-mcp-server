@@ -458,3 +458,117 @@ export async function updateRecipeIngredientsBatch(
     apiRequestCount: requestCounts.reduce((sum, count) => sum + count, 0),
   };
 }
+
+// ── Batch layer ──────────────────────────────────────────────────────────────
+//
+// A narrow batching wrapper over updateRecipeIngredients above, added once a real pilot showed
+// that once food/unit resolution is done in bulk (get_food_matches/get_unit_matches), one
+// individual update_recipe_ingredients call per recipe becomes the dominant remaining
+// model-to-MCP round trip. This layer performs no interpretation of its own — it never parses,
+// matches, or creates anything — it only fans the same per-recipe write out with bounded
+// concurrency and isolates each recipe's outcome so one failure never rolls back or blocks
+// the rest of the batch (transient upstream 502s have been observed in real multi-recipe usage).
+
+export const RECIPE_INGREDIENTS_BATCH_MAX_SIZE = 25;
+const BATCH_CONCURRENCY = 5;
+
+export interface RecipeIngredientsBatchUpdate {
+  slug: string;
+  ingredients: RecipeIngredientInput[];
+}
+
+export interface RecipeIngredientsBatchError {
+  message: string;
+  status?: number;
+}
+
+export type RecipeIngredientsBatchResultItem =
+  | { slug: string; success: true; ingredientCount: number }
+  | { slug: string; success: false; error: RecipeIngredientsBatchError };
+
+export interface RecipeIngredientsBatchResult {
+  requestedCount: number;
+  succeededCount: number;
+  failedCount: number;
+  results: RecipeIngredientsBatchResultItem[];
+  apiRequestCount: number;
+}
+
+/** Thrown for bad batch request shape (as opposed to a per-recipe runtime failure). */
+export class RecipeIngredientsBatchValidationError extends Error {}
+
+// Only structural issues that make the request as a whole impossible to interpret are validated
+// here (empty/oversized batch, missing or duplicate slug). A malformed *ingredient* (e.g. a
+// mismatched foodId/foodName pair) is a problem with one recipe's payload, not the batch shape —
+// it surfaces as that recipe's isolated failure via updateRecipeIngredients below, exactly as it
+// would from a standalone update_recipe_ingredients call, and never blocks its siblings.
+function validateBatch(updates: RecipeIngredientsBatchUpdate[]): void {
+  if (updates.length === 0) {
+    throw new RecipeIngredientsBatchValidationError('At least one recipe update is required.');
+  }
+  if (updates.length > RECIPE_INGREDIENTS_BATCH_MAX_SIZE) {
+    throw new RecipeIngredientsBatchValidationError(
+      `At most ${RECIPE_INGREDIENTS_BATCH_MAX_SIZE} recipes are allowed per batch call (got ${updates.length}).`,
+    );
+  }
+
+  const seen = new Set<string>();
+  const duplicates = new Set<string>();
+  for (const update of updates) {
+    const slug = update.slug?.trim();
+    if (!slug) {
+      throw new RecipeIngredientsBatchValidationError('Each update must include a non-empty recipe slug.');
+    }
+    if (seen.has(slug)) duplicates.add(slug);
+    seen.add(slug);
+  }
+  if (duplicates.size > 0) {
+    throw new RecipeIngredientsBatchValidationError(
+      `Duplicate recipe slug(s) in the same batch call: ${[...duplicates].join(', ')}. ` +
+        'Each recipe may appear at most once per batch — submit a second call for a repeat update.',
+    );
+  }
+}
+
+function toBatchError(error: unknown): RecipeIngredientsBatchError {
+  if (error instanceof MealieApiError) {
+    return { message: error.message, status: error.status };
+  }
+  return { message: error instanceof Error ? error.message : String(error) };
+}
+
+/**
+ * Applies updateRecipeIngredients to multiple recipes with bounded concurrency, in input order.
+ * Each recipe is a complete, independent replacement of its recipeIngredient collection — there is
+ * no cross-recipe transaction. A failure on one recipe (a 404/422 from Mealie, a transient 502,
+ * or a local validation error like a mismatched foodId/foodName) is captured as that recipe's
+ * result; every other recipe in the batch is still attempted and its own success/failure reported.
+ */
+export async function updateRecipeIngredientsBatch(
+  updates: RecipeIngredientsBatchUpdate[],
+): Promise<RecipeIngredientsBatchResult> {
+  validateBatch(updates);
+
+  const results = await mapWithConcurrency<RecipeIngredientsBatchUpdate, RecipeIngredientsBatchResultItem>(
+    updates,
+    BATCH_CONCURRENCY,
+    async (update) => {
+      try {
+        await updateRecipeIngredients(update.slug, update.ingredients);
+        return { slug: update.slug, success: true, ingredientCount: update.ingredients.length };
+      } catch (error) {
+        return { slug: update.slug, success: false, error: toBatchError(error) };
+      }
+    },
+  );
+
+  const succeededCount = results.filter((result) => result.success).length;
+
+  return {
+    requestedCount: updates.length,
+    succeededCount,
+    failedCount: updates.length - succeededCount,
+    results,
+    apiRequestCount: updates.length,
+  };
+}
