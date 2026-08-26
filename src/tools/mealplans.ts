@@ -4,8 +4,10 @@ import * as mealplansApi from '../api/mealplans.js';
 import { getRecipesBatch } from '../api/recipes.js';
 
 export function registerMealplanTools(server: McpServer) {
+  // @endpoints GET /api/households/mealplans
   server.tool(
     'get_all_mealplans',
+    'Lists meal plans with optional date range filtering and pagination.',
     {
       startDate: z.string().optional(),
       endDate: z.string().optional(),
@@ -22,8 +24,10 @@ export function registerMealplanTools(server: McpServer) {
     },
   );
 
+  // @endpoints GET /api/households/mealplans, GET /api/recipes/{slug}
   server.tool(
     'get_mealplan_with_recipes',
+    'Returns meal plans with embedded recipe details (full recipe data fetched via batch requests with bounded concurrency).',
     {
       startDate: z.string(),
       endDate: z.string(),
@@ -63,8 +67,10 @@ export function registerMealplanTools(server: McpServer) {
     },
   );
 
+  // @endpoints POST /api/households/mealplans
   server.tool(
     'create_mealplan',
+    'Creates a single meal plan entry for a given date.',
     {
       date: z.string(),
       recipeId: z.string().optional(),
@@ -81,8 +87,10 @@ export function registerMealplanTools(server: McpServer) {
     },
   );
 
+  // @endpoints POST /api/households/mealplans
   server.tool(
     'create_mealplan_bulk',
+    'Creates multiple meal plan entries at once via concurrent requests.',
     {
       entries: z.array(
         z.object({
@@ -107,8 +115,10 @@ export function registerMealplanTools(server: McpServer) {
     },
   );
 
+  // @endpoints GET /api/households/mealplans/today
   server.tool(
     'get_todays_mealplan',
+    'Returns today\'s meal plan.',
     {},
     async () => {
       try {

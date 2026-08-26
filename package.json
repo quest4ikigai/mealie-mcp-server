@@ -16,7 +16,10 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "inspect": "npx @modelcontextprotocol/inspector dist/index.js"
+    "gen:docs": "node scripts/gen-docs.mjs",
+    "gen:docs:check": "node scripts/gen-docs.mjs --check",
+    "inspect": "npx @modelcontextprotocol/inspector dist/index.js",
+    "prepare": "husky"
   },
   "engines": {
     "node": ">=22"
@@ -45,6 +48,7 @@
     "@semantic-release/npm": "^13",
     "@types/node": "^22",
     "eslint": "^9",
+    "husky": "^9.1.7",
     "semantic-release": "^25",
     "tsx": "^4",
     "typescript": "~5.8.3",

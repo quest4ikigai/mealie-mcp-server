@@ -3,8 +3,10 @@ import { z } from 'zod';
 import * as categoriesApi from '../api/categories.js';
 
 export function registerCategoryTools(server: McpServer): void {
+  // @endpoints GET /api/organizers/categories
   server.tool(
     'get_categories',
+    'Lists and searches the household\'s recipe categories with pagination.',
     { page: z.number().optional(), perPage: z.number().optional() },
     async (params) => {
       try {
@@ -16,8 +18,10 @@ export function registerCategoryTools(server: McpServer): void {
     },
   );
 
+  // @endpoints GET /api/organizers/categories/empty
   server.tool(
     'get_empty_categories',
+    'Returns categories that have no recipes assigned.',
     {},
     async () => {
       try {
@@ -29,8 +33,10 @@ export function registerCategoryTools(server: McpServer): void {
     },
   );
 
+  // @endpoints POST /api/organizers/categories
   server.tool(
     'create_category',
+    'Creates a new recipe category.',
     { name: z.string() },
     async (params) => {
       try {
@@ -42,8 +48,10 @@ export function registerCategoryTools(server: McpServer): void {
     },
   );
 
+  // @endpoints GET /api/organizers/categories/{id}
   server.tool(
     'get_category',
+    'Retrieves a single category by its UUID.',
     { categoryId: z.string() },
     async (params) => {
       try {
@@ -55,8 +63,10 @@ export function registerCategoryTools(server: McpServer): void {
     },
   );
 
+  // @endpoints GET /api/organizers/categories/slug/{slug}
   server.tool(
     'get_category_by_slug',
+    'Retrieves a single category by its URL slug.',
     { categorySlug: z.string() },
     async (params) => {
       try {
@@ -68,8 +78,10 @@ export function registerCategoryTools(server: McpServer): void {
     },
   );
 
+  // @endpoints PUT /api/organizers/categories/{id}
   server.tool(
     'update_category',
+    'Updates a category\'s name.',
     { categoryId: z.string(), name: z.string().optional() },
     async (params) => {
       try {
@@ -83,8 +95,10 @@ export function registerCategoryTools(server: McpServer): void {
     },
   );
 
+  // @endpoints DELETE /api/organizers/categories/{id}
   server.tool(
     'delete_category',
+    'Deletes a category. Mealie may refuse if recipes still reference it.',
     { categoryId: z.string() },
     async (params) => {
       try {

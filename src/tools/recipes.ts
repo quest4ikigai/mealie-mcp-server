@@ -124,8 +124,11 @@ function errorResponse(error: unknown) {
 }
 
 export function registerRecipeTools(server: McpServer) {
+  // @endpoints GET /api/recipes
   server.tool(
     'get_recipes',
+    'Searches and lists recipes with pagination. Categories and tags are resolved by name/slug/ID against ' +
+      'Mealie\'s organizer endpoints before the request, since Mealie\'s query params only match by exact slug/ID.',
     {
       search: z.string().optional(),
       page: z.number().optional(),
@@ -153,6 +156,7 @@ export function registerRecipeTools(server: McpServer) {
     },
   );
 
+  // @endpoints GET /api/foods, GET /api/recipes/suggestions, GET /api/recipes
   server.tool(
     'find_recipes_for_ingredients',
     'Finds recipes that contain one or more requested ingredients. Ingredient names are resolved against ' +
@@ -201,8 +205,10 @@ export function registerRecipeTools(server: McpServer) {
     },
   );
 
+  // @endpoints GET /api/recipes/{slug}
   server.tool(
     'get_recipe_detailed',
+    'Retrieves a recipe by slug with full details including nutrition, settings, and assets.',
     { slug: z.string() },
     async ({ slug }) => {
       try {
@@ -214,8 +220,10 @@ export function registerRecipeTools(server: McpServer) {
     },
   );
 
+  // @endpoints GET /api/recipes/{slug}
   server.tool(
     'get_recipe_concise',
+    'Retrieves a recipe by slug, filtered to summary fields (name, slug, servings, yield, total time, rating, ingredients, last made).',
     { slug: z.string() },
     async ({ slug }) => {
       try {
@@ -233,8 +241,10 @@ export function registerRecipeTools(server: McpServer) {
     },
   );
 
+  // @endpoints GET /api/recipes/{slug}
   server.tool(
     'get_recipes_batch',
+    'Fetches multiple recipes by slug with bounded concurrency (4 in-flight requests at a time).',
     { slugs: z.array(z.string()) },
     async ({ slugs }) => {
       try {
@@ -246,8 +256,10 @@ export function registerRecipeTools(server: McpServer) {
     },
   );
 
+  // @endpoints GET /api/recipes/{slug}
   server.tool(
     'get_recipes_detailed_batch',
+    'Fetches multiple recipes by slug with full details (including nutrition) and bounded concurrency.',
     { slugs: z.array(z.string()).describe('Recipe slugs to fetch in parallel') },
     async ({ slugs }) => {
       try {
@@ -259,6 +271,7 @@ export function registerRecipeTools(server: McpServer) {
     },
   );
 
+  // @endpoints GET /api/recipes, GET /api/recipes/{slug}
   server.tool(
     'get_recipes_for_classification',
     'Compact, paginated, READ-ONLY feed of recipes for assigning Categories and Tags. Returns only the ' +
@@ -316,6 +329,7 @@ export function registerRecipeTools(server: McpServer) {
     },
   );
 
+  // @endpoints GET /api/recipes, GET /api/recipes/{slug}
   server.tool(
     'get_recipes_for_ingredient_parsing',
     'Compact, paginated, READ-ONLY work queue of recipes whose ingredients may need structured parsing. This ' +
@@ -396,8 +410,10 @@ export function registerRecipeTools(server: McpServer) {
     },
   );
 
+  // @endpoints POST /api/recipes, PUT /api/recipes/{slug}
   server.tool(
     'create_recipe',
+    'Creates a new recipe. Optionally sets ingredients and instructions on creation.',
     {
       name: z.string(),
       ingredients: z.array(z.string()).optional(),
@@ -412,7 +428,6 @@ export function registerRecipeTools(server: McpServer) {
           const current = await recipesApi.getRecipe(slug);
           const updatedData = { ...current };
           if (ingredients) {
-            // Mealie expects structured objects, not bare strings
             updatedData.recipeIngredient = ingredients.map((note) => ({ note }));
           }
           if (instructions) {
@@ -428,8 +443,10 @@ export function registerRecipeTools(server: McpServer) {
     },
   );
 
+  // @endpoints GET /api/recipes/{slug}, PATCH /api/recipes/{slug}
   server.tool(
     'patch_recipe',
+    'Partially updates a recipe. Also accepts optional categories/tags/taxonomyMode/createMissing for taxonomy assignment.',
     {
       slug: z.string(),
       name: z.string().optional(),
@@ -471,6 +488,7 @@ export function registerRecipeTools(server: McpServer) {
     },
   );
 
+  // @endpoints PATCH /api/recipes/{slug}
   server.tool(
     'update_recipe_ingredients',
     'Replaces the complete structured ingredient collection (recipeIngredient) of an existing recipe, leaving ' +
@@ -507,8 +525,11 @@ export function registerRecipeTools(server: McpServer) {
     },
   );
 
+  // @endpoints GET /api/organizers/categories, POST /api/organizers/categories, GET /api/organizers/tags, POST /api/organizers/tags, GET /api/recipes/{slug}, PATCH /api/recipes/{slug}
   server.tool(
     'update_recipe_taxonomy',
+    'Updates a recipe\'s categories and/or tags. Resolves requested names/slugs/IDs against existing taxonomy, ' +
+      'optionally auto-creating missing values. Reads the recipe first to merge with existing taxonomy.',
     {
       slug: z.string().describe('Slug of the recipe to update.'),
       categories: categoriesParamSchema.optional(),
@@ -526,8 +547,11 @@ export function registerRecipeTools(server: McpServer) {
     },
   );
 
+  // @endpoints GET /api/organizers/categories, POST /api/organizers/categories, GET /api/organizers/tags, POST /api/organizers/tags, GET /api/recipes/{slug}, PATCH /api/recipes/{slug}
   server.tool(
     'update_recipe_taxonomy_batch',
+    'Runs update_recipe_taxonomy for multiple recipes with bounded concurrency (5 at a time), returning a ' +
+      'success/error result per recipe.',
     {
       updates: z
         .array(
@@ -555,8 +579,10 @@ export function registerRecipeTools(server: McpServer) {
     },
   );
 
+  // @endpoints POST /api/recipes/{slug}/duplicate
   server.tool(
     'duplicate_recipe',
+    'Creates a duplicate of an existing recipe with an optional new name.',
     { slug: z.string(), name: z.string().optional() },
     async ({ slug, name }) => {
       try {
@@ -568,8 +594,10 @@ export function registerRecipeTools(server: McpServer) {
     },
   );
 
+  // @endpoints PATCH /api/recipes/{slug}/last-made
   server.tool(
     'mark_recipe_last_made',
+    'Records the current timestamp as the recipe\'s last-made date.',
     { slug: z.string() },
     async ({ slug }) => {
       try {
@@ -581,8 +609,10 @@ export function registerRecipeTools(server: McpServer) {
     },
   );
 
+  // @endpoints POST /api/recipes/{slug}/image
   server.tool(
     'set_recipe_image_from_url',
+    'Sets a recipe\'s image from a URL.',
     { slug: z.string(), imageUrl: z.string() },
     async ({ slug, imageUrl }) => {
       try {
@@ -594,8 +624,10 @@ export function registerRecipeTools(server: McpServer) {
     },
   );
 
+  // @endpoints DELETE /api/recipes/{slug}
   server.tool(
     'delete_recipe',
+    'Permanently deletes a recipe.',
     { slug: z.string() },
     async ({ slug }) => {
       try {

@@ -46,6 +46,7 @@ const standardUnitParamSchema = z
   );
 
 export function registerUnitTools(server: McpServer): void {
+  // @endpoints GET /api/units
   server.tool(
     'get_units',
     'Search or list canonical Mealie ingredient units (e.g. "tablespoon", "cup", "gram") with plain pagination. ' +
@@ -72,6 +73,7 @@ export function registerUnitTools(server: McpServer): void {
     },
   );
 
+  // @endpoints GET /api/units/{id}
   server.tool(
     'get_unit',
     'Retrieves a single canonical Mealie ingredient unit by ID, including its aliases, abbreviations, and ' +
@@ -87,6 +89,7 @@ export function registerUnitTools(server: McpServer): void {
     },
   );
 
+  // @endpoints GET /api/units (with queryFilter)
   server.tool(
     'get_unit_matches',
     'Finds existing canonical Mealie unit candidates for multiple already-interpreted unit concepts in one ' +
@@ -133,6 +136,7 @@ export function registerUnitTools(server: McpServer): void {
     },
   );
 
+  // @endpoints POST /api/units
   server.tool(
     'create_unit',
     'Creates a canonical Mealie ingredient unit when an appropriate unit does not already exist. Call ' +
@@ -172,6 +176,7 @@ export function registerUnitTools(server: McpServer): void {
     },
   );
 
+  // @endpoints GET /api/units/{id}, PUT /api/units/{id}
   server.tool(
     'update_unit',
     'Updates an existing canonical Mealie ingredient unit. Fields left unspecified keep their current value. ' +
@@ -213,6 +218,7 @@ export function registerUnitTools(server: McpServer): void {
     },
   );
 
+  // @endpoints DELETE /api/units/{id}
   server.tool(
     'delete_unit',
     'DESTRUCTIVE and irreversible: permanently deletes a canonical Mealie ingredient unit. Use get_unit first ' +

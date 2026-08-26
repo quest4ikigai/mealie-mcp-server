@@ -27,6 +27,7 @@ const aliasesParamSchema = z
   );
 
 export function registerFoodTools(server: McpServer): void {
+  // @endpoints GET /api/foods
   server.tool(
     'get_foods',
     'Lists and searches the household\'s foods (reusable structured ingredient entities such as "chicken breast" ' +
@@ -57,6 +58,7 @@ export function registerFoodTools(server: McpServer): void {
     },
   );
 
+  // @endpoints GET /api/foods/{id}
   server.tool(
     'get_food',
     'Retrieves a single food by ID, including its aliases and label information when present.',
@@ -71,6 +73,7 @@ export function registerFoodTools(server: McpServer): void {
     },
   );
 
+  // @endpoints GET /api/foods (with queryFilter)
   server.tool(
     'get_food_matches',
     'Finds existing canonical Mealie food candidates for multiple already-interpreted food concepts in one ' +
@@ -115,6 +118,7 @@ export function registerFoodTools(server: McpServer): void {
     },
   );
 
+  // @endpoints POST /api/foods
   server.tool(
     'create_food',
     'Creates a new food. Call get_foods first to check whether an existing food or alias already covers this ' +
@@ -136,6 +140,7 @@ export function registerFoodTools(server: McpServer): void {
     },
   );
 
+  // @endpoints GET /api/foods/{id}, PUT /api/foods/{id}
   server.tool(
     'update_food',
     'Updates an existing food. Fields left unspecified keep their current value. Sufficient for adding an alias: ' +
@@ -171,6 +176,7 @@ export function registerFoodTools(server: McpServer): void {
     },
   );
 
+  // @endpoints DELETE /api/foods/{id}
   server.tool(
     'delete_food',
     'DESTRUCTIVE and irreversible: permanently deletes a food. Use get_food first to verify this is the exact ' +

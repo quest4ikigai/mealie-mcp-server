@@ -3,8 +3,10 @@ import { z } from 'zod';
 import * as tagsApi from '../api/tags.js';
 
 export function registerTagTools(server: McpServer) {
+  // @endpoints GET /api/organizers/tags
   server.tool(
     'get_tags',
+    'Lists and searches the household\'s recipe tags with pagination.',
     { page: z.number().optional(), perPage: z.number().optional() },
     async (params) => {
       try {
@@ -16,8 +18,10 @@ export function registerTagTools(server: McpServer) {
     },
   );
 
+  // @endpoints GET /api/organizers/tags/empty
   server.tool(
     'get_empty_tags',
+    'Returns tags that have no recipes assigned.',
     {},
     async () => {
       try {
@@ -29,8 +33,10 @@ export function registerTagTools(server: McpServer) {
     },
   );
 
+  // @endpoints POST /api/organizers/tags
   server.tool(
     'create_tag',
+    'Creates a new recipe tag.',
     { name: z.string() },
     async (params) => {
       try {
@@ -42,8 +48,10 @@ export function registerTagTools(server: McpServer) {
     },
   );
 
+  // @endpoints GET /api/organizers/tags/{id}
   server.tool(
     'get_tag',
+    'Retrieves a single tag by its UUID.',
     { tagId: z.string() },
     async (params) => {
       try {
@@ -55,8 +63,10 @@ export function registerTagTools(server: McpServer) {
     },
   );
 
+  // @endpoints GET /api/organizers/tags/slug/{slug}
   server.tool(
     'get_tag_by_slug',
+    'Retrieves a single tag by its URL slug.',
     { tagSlug: z.string() },
     async (params) => {
       try {
@@ -68,8 +78,10 @@ export function registerTagTools(server: McpServer) {
     },
   );
 
+  // @endpoints PUT /api/organizers/tags/{id}
   server.tool(
     'update_tag',
+    'Updates a tag\'s name.',
     { tagId: z.string(), name: z.string().optional() },
     async (params) => {
       try {
@@ -83,8 +95,10 @@ export function registerTagTools(server: McpServer) {
     },
   );
 
+  // @endpoints DELETE /api/organizers/tags/{id}
   server.tool(
     'delete_tag',
+    'Deletes a tag. Mealie may refuse if recipes still reference it.',
     { tagId: z.string() },
     async (params) => {
       try {

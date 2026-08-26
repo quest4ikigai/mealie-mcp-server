@@ -1,0 +1,1 @@
+node scripts/gen-docs.mjs && git add README.md API_COVERAGE.md

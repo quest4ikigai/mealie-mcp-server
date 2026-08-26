@@ -152,29 +152,40 @@ yarn build
 yarn lint
 ```
 
+<!-- BEGIN GENERATED TOOLS -->
 ## Available Tools (61 total)
 
 ### Recipes (17)
-`get_recipes`, `find_recipes_for_ingredients`, `get_recipe_detailed`, `get_recipe_concise`, `get_recipes_batch`, `get_recipes_detailed_batch`, `get_recipes_for_classification`, `get_recipes_for_ingredient_parsing`, `create_recipe`, `patch_recipe`, `update_recipe_ingredients`, `update_recipe_taxonomy`, `update_recipe_taxonomy_batch`, `duplicate_recipe`, `mark_recipe_last_made`, `set_recipe_image_from_url`, `delete_recipe`
+`create_recipe`, `delete_recipe`, `duplicate_recipe`, `find_recipes_for_ingredients`, `get_recipe_concise`, `get_recipe_detailed`, `get_recipes`, `get_recipes_batch`, `get_recipes_detailed_batch`, `get_recipes_for_classification`, `get_recipes_for_ingredient_parsing`, `mark_recipe_last_made`, `patch_recipe`, `set_recipe_image_from_url`, `update_recipe_ingredients`, `update_recipe_taxonomy`, `update_recipe_taxonomy_batch`
 
 ### Meal Plans (5)
-`get_all_mealplans`, `get_mealplan_with_recipes`, `create_mealplan`, `create_mealplan_bulk`, `get_todays_mealplan`
+`create_mealplan`, `create_mealplan_bulk`, `get_all_mealplans`, `get_mealplan_with_recipes`, `get_todays_mealplan`
 
 ### Categories (7)
-`get_categories`, `get_empty_categories`, `create_category`, `get_category`, `get_category_by_slug`, `update_category`, `delete_category`
+`create_category`, `delete_category`, `get_categories`, `get_category`, `get_category_by_slug`, `get_empty_categories`, `update_category`
 
 ### Tags (7)
-`get_tags`, `get_empty_tags`, `create_tag`, `get_tag`, `get_tag_by_slug`, `update_tag`, `delete_tag`
+`create_tag`, `delete_tag`, `get_empty_tags`, `get_tag`, `get_tag_by_slug`, `get_tags`, `update_tag`
 
 ### Shopping Lists (13)
-`get_shopping_lists`, `create_shopping_list`, `get_shopping_list`, `update_shopping_list`, `delete_shopping_list`, `add_recipe_to_shopping_list`, `remove_recipe_from_shopping_list`, `get_shopping_list_items`, `create_shopping_list_item`, `create_shopping_list_items_bulk`, `update_shopping_list_item`, `delete_shopping_list_item`, `delete_shopping_list_items_bulk`
+`add_recipe_to_shopping_list`, `create_shopping_list`, `create_shopping_list_item`, `create_shopping_list_items_bulk`, `delete_shopping_list`, `delete_shopping_list_item`, `delete_shopping_list_items_bulk`, `get_shopping_list`, `get_shopping_list_items`, `get_shopping_lists`, `remove_recipe_from_shopping_list`, `update_shopping_list`, `update_shopping_list_item`
 
 ### Foods (6)
-`get_foods`, `get_food`, `get_food_matches`, `create_food`, `update_food`, `delete_food`
+`create_food`, `delete_food`, `get_food`, `get_food_matches`, `get_foods`, `update_food`
 
 ### Units (6)
-`get_units`, `get_unit`, `get_unit_matches`, `create_unit`, `update_unit`, `delete_unit`
+`create_unit`, `delete_unit`, `get_unit`, `get_unit_matches`, `get_units`, `update_unit`
+
+## Prompts (1)
+
+- `weekly-meal-plan` — Generate a balanced weekly meal plan with breakfast, lunch, and dinner for 7 days
+<!-- END GENERATED TOOLS -->
 
 ## License
 
 [MIT](./LICENSE)
+
+
+
+
+
