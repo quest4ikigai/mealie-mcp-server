@@ -4,11 +4,17 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import { registerAllTools } from './tools/index.js';
+import { MEALIE_SERVER_INSTRUCTIONS } from './server-instructions.js';
 
-const server = new McpServer({
-  name: 'mealie-mcp-server',
-  version: '1.0.0',
-});
+const server = new McpServer(
+  {
+    name: 'mealie-mcp-server',
+    version: '1.0.0',
+  },
+  {
+    instructions: MEALIE_SERVER_INSTRUCTIONS,
+  },
+);
 
 registerAllTools(server);
 
