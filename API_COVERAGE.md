@@ -63,10 +63,10 @@
 - `set_recipe_image_from_url` — POST /api/recipes/{slug}/image
   Sets a recipe\
 
-- `update_recipe_ingredients` — PATCH /api/recipes/{slug}
+- `update_recipe_ingredients` — GET /api/recipes/{slug}, PATCH /api/recipes/{slug}
   Replaces the complete structured ingredient collection (recipeIngredient) of an existing recipe, leaving 
 
-- `update_recipe_ingredients_batch` — PATCH /api/recipes/{slug}
+- `update_recipe_ingredients_batch` — GET /api/recipes/{slug}, PATCH /api/recipes/{slug}
   Runs update_recipe_ingredients for multiple recipes with bounded concurrency (5 at a time). Use this 
 
 - `update_recipe_taxonomy` — GET /api/organizers/categories, POST /api/organizers/categories, GET /api/organizers/tags, POST /api/organizers/tags, GET /api/recipes/{slug}, PATCH /api/recipes/{slug}

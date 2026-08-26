@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('../api/recipes.js', () => ({
+  getRecipe: vi.fn(),
   patchRecipe: vi.fn(),
 }));
 
@@ -9,15 +10,28 @@ import { MealieApiError } from '../api/client.js';
 import {
   updateRecipeIngredients,
   updateRecipeIngredientsBatch,
+  IngredientVerificationError,
   RecipeIngredientsBatchValidationError,
   RECIPE_INGREDIENTS_BATCH_MAX_SIZE,
 } from '../lib/recipe-ingredients.js';
 
+const mockGetRecipe = vi.mocked(recipesApi.getRecipe);
 const mockPatchRecipe = vi.mocked(recipesApi.patchRecipe);
+
+const ORIGINAL_RECIPE = {
+  slug: 'chicken-shawarma',
+  name: 'Chicken Shawarma',
+  description: 'Original description',
+  recipeIngredient: [{ note: 'original ingredient', referenceId: 'ref-original' }],
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockPatchRecipe.mockImplementation((_slug: string, data: Record<string, unknown>) => Promise.resolve(data));
+  mockGetRecipe.mockImplementation((slug: string) => Promise.resolve({ ...ORIGINAL_RECIPE, slug }));
+  // Echoing the exact outgoing payload back is what a well-behaved Mealie write looks like: the
+  // minimal { id, name } food/unit objects we send are handed straight back, so verification's
+  // id/name checks pass for free in every test that doesn't override this default.
+  mockPatchRecipe.mockImplementation((_slug: string, data: Record<string, unknown>) => Promise.resolve({ ...data }));
 });
 
 describe('updateRecipeIngredients — replacing structured ingredients', () => {
@@ -177,6 +191,7 @@ describe('updateRecipeIngredients — alias/name independence', () => {
 
   it('rejects a foodId given without a foodName', async () => {
     await expect(updateRecipeIngredients('chicken-shawarma', [{ foodId: 'food-abc' }])).rejects.toThrow(/foodName/);
+    expect(mockGetRecipe).not.toHaveBeenCalled();
     expect(mockPatchRecipe).not.toHaveBeenCalled();
   });
 
@@ -197,12 +212,98 @@ describe('updateRecipeIngredients — alias/name independence', () => {
 
   it('validates ingredients before making any network call', async () => {
     await expect(updateRecipeIngredients('chicken-shawarma', [{ foodId: 'food-abc' }])).rejects.toThrow();
+    expect(mockGetRecipe).not.toHaveBeenCalled();
     expect(mockPatchRecipe).not.toHaveBeenCalled();
+  });
+});
+
+describe('updateRecipeIngredients — case-insensitive name matching', () => {
+  it('accepts a persisted food name that only differs in case from the requested name', async () => {
+    mockPatchRecipe.mockResolvedValue({
+      recipeIngredient: [{ food: { id: 'food-1', name: 'TOMATO' }, unit: null }],
+    });
+
+    await expect(
+      updateRecipeIngredients('chicken-shawarma', [{ foodId: 'food-1', foodName: 'tomato' }]),
+    ).resolves.toBeDefined();
+  });
+
+  it('accepts a persisted unit name that only differs in case from the requested name', async () => {
+    mockPatchRecipe.mockResolvedValue({
+      recipeIngredient: [{ food: null, unit: { id: 'unit-1', name: 'TABLESPOON' } }],
+    });
+
+    await expect(
+      updateRecipeIngredients('chicken-shawarma', [{ unitId: 'unit-1', unitName: 'tablespoon' }]),
+    ).resolves.toBeDefined();
+  });
+
+  it('accepts a persisted food name matching only via pluralName', async () => {
+    mockPatchRecipe.mockResolvedValue({
+      recipeIngredient: [{ food: { id: 'food-1', name: 'tomato', pluralName: 'Tomatoes' }, unit: null }],
+    });
+
+    await expect(
+      updateRecipeIngredients('chicken-shawarma', [{ foodId: 'food-1', foodName: 'tomatoes' }]),
+    ).resolves.toBeDefined();
+  });
+
+  it('accepts a persisted unit name matching only via abbreviation', async () => {
+    mockPatchRecipe.mockResolvedValue({
+      recipeIngredient: [{ food: null, unit: { id: 'unit-1', name: 'tablespoon', abbreviation: 'tbsp' } }],
+    });
+
+    await expect(
+      updateRecipeIngredients('chicken-shawarma', [{ unitId: 'unit-1', unitName: 'tbsp' }]),
+    ).resolves.toBeDefined();
+  });
+});
+
+describe('updateRecipeIngredients — legitimate unstructured/unitless rows', () => {
+  it('does not require a unit for a legitimate unitless countable (e.g. "4 eggs")', async () => {
+    mockPatchRecipe.mockResolvedValue({
+      recipeIngredient: [{ food: { id: 'food-egg', name: 'egg' }, unit: null, quantity: 4 }],
+    });
+
+    await expect(
+      updateRecipeIngredients('chicken-shawarma', [{ foodId: 'food-egg', foodName: 'egg', quantity: 4 }]),
+    ).resolves.toBeDefined();
+  });
+
+  it('does not require a food when no foodId was supplied (e.g. a section heading row)', async () => {
+    mockPatchRecipe.mockResolvedValue({
+      recipeIngredient: [{ food: null, unit: null, title: 'For the sauce' }],
+    });
+
+    await expect(
+      updateRecipeIngredients('chicken-shawarma', [{ title: 'For the sauce' }]),
+    ).resolves.toBeDefined();
+  });
+
+  it('continues to succeed for a food without a unit', async () => {
+    mockPatchRecipe.mockResolvedValue({
+      recipeIngredient: [{ food: { id: 'food-1', name: 'olive oil' }, unit: null }],
+    });
+
+    await expect(
+      updateRecipeIngredients('chicken-shawarma', [{ foodId: 'food-1', foodName: 'olive oil' }]),
+    ).resolves.toBeDefined();
+  });
+
+  it('continues to succeed for an explicit quantity of 0', async () => {
+    mockPatchRecipe.mockResolvedValue({
+      recipeIngredient: [{ food: { id: 'food-1', name: 'olive oil' }, unit: null, quantity: 0 }],
+    });
+
+    await expect(
+      updateRecipeIngredients('chicken-shawarma', [{ foodId: 'food-1', foodName: 'olive oil', quantity: 0 }]),
+    ).resolves.toBeDefined();
   });
 });
 
 describe('updateRecipeIngredients — empty ingredient collection', () => {
   it('sends an empty recipeIngredient array to intentionally clear all ingredients', async () => {
+    mockPatchRecipe.mockResolvedValue({ recipeIngredient: [] });
     await updateRecipeIngredients('chicken-shawarma', []);
 
     const [, payload] = mockPatchRecipe.mock.calls[0];
@@ -211,7 +312,13 @@ describe('updateRecipeIngredients — empty ingredient collection', () => {
 });
 
 describe('updateRecipeIngredients — recipe not found', () => {
-  it('propagates the same not-found error as other recipe tools', async () => {
+  it('propagates a not-found error from the initial fetch', async () => {
+    mockGetRecipe.mockRejectedValue(new Error('Mealie API error 404: Not Found'));
+    await expect(updateRecipeIngredients('missing-recipe', [{ note: 'x' }])).rejects.toThrow(/404/);
+    expect(mockPatchRecipe).not.toHaveBeenCalled();
+  });
+
+  it('propagates the same not-found error when it surfaces from the write instead', async () => {
     mockPatchRecipe.mockRejectedValue(new Error('Mealie API error 404: Not Found'));
     await expect(updateRecipeIngredients('missing-recipe', [{ note: 'x' }])).rejects.toThrow(/404/);
   });
@@ -221,6 +328,172 @@ describe('updateRecipeIngredients — Mealie API failure', () => {
   it('propagates an error from the patch call without masquerading as success', async () => {
     mockPatchRecipe.mockRejectedValue(new Error('Mealie API error 500: Internal Server Error'));
     await expect(updateRecipeIngredients('chicken-shawarma', [{ note: 'x' }])).rejects.toThrow(/500/);
+  });
+
+  it('does not attempt a rollback for a plain Mealie API failure (nothing was verified)', async () => {
+    mockPatchRecipe.mockRejectedValue(new Error('Mealie API error 500: Internal Server Error'));
+    await expect(updateRecipeIngredients('chicken-shawarma', [{ note: 'x' }])).rejects.toThrow();
+    expect(mockPatchRecipe).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ── Post-write verification & rollback ──────────────────────────────────────
+
+describe('updateRecipeIngredients — verification: nonexistent food id', () => {
+  it('detects Mealie silently dropping a requested food association (food: null) and restores the original recipe', async () => {
+    // First call (the write) returns food: null; second call (the rollback) succeeds.
+    mockPatchRecipe
+      .mockResolvedValueOnce({
+        recipeIngredient: [
+          { food: null, note: 'fresh; for garnish', originalText: 'Fresh cilantro for garnish' },
+        ],
+      })
+      .mockResolvedValueOnce({ recipeIngredient: ORIGINAL_RECIPE.recipeIngredient });
+
+    await expect(
+      updateRecipeIngredients('chicken-shawarma', [
+        {
+          foodId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+          foodName: 'cilantro',
+          note: 'fresh; for garnish',
+          originalText: 'Fresh cilantro for garnish',
+        },
+      ]),
+    ).rejects.toThrow(IngredientVerificationError);
+
+    expect(mockPatchRecipe).toHaveBeenCalledTimes(2);
+    const [rollbackSlug, rollbackPayload] = mockPatchRecipe.mock.calls[1];
+    expect(rollbackSlug).toBe('chicken-shawarma');
+    expect(rollbackPayload).toEqual({ recipeIngredient: ORIGINAL_RECIPE.recipeIngredient });
+  });
+
+  it('reports failure (not success) and includes an actionable message', async () => {
+    mockPatchRecipe
+      .mockResolvedValueOnce({ recipeIngredient: [{ food: null }] })
+      .mockResolvedValueOnce({ recipeIngredient: ORIGINAL_RECIPE.recipeIngredient });
+
+    await expect(
+      updateRecipeIngredients('chicken-shawarma', [{ foodId: 'food-x', foodName: 'cilantro' }]),
+    ).rejects.toThrow(/foodId 'food-x'.*no food association/s);
+  });
+
+  it('reports success (verification passed) when rollback was not needed', async () => {
+    mockPatchRecipe.mockResolvedValue({
+      recipeIngredient: [{ food: { id: 'food-x', name: 'cilantro' } }],
+    });
+    await expect(
+      updateRecipeIngredients('chicken-shawarma', [{ foodId: 'food-x', foodName: 'cilantro' }]),
+    ).resolves.toBeDefined();
+    expect(mockPatchRecipe).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves unrelated recipe fields conceptually untouched by rollback (rollback payload is recipeIngredient only)', async () => {
+    mockPatchRecipe
+      .mockResolvedValueOnce({ recipeIngredient: [{ food: null }] })
+      .mockResolvedValueOnce({ recipeIngredient: ORIGINAL_RECIPE.recipeIngredient });
+
+    await expect(
+      updateRecipeIngredients('chicken-shawarma', [{ foodId: 'food-x', foodName: 'cilantro' }]),
+    ).rejects.toThrow();
+
+    const [, rollbackPayload] = mockPatchRecipe.mock.calls[1];
+    expect(Object.keys(rollbackPayload)).toEqual(['recipeIngredient']);
+  });
+});
+
+describe('updateRecipeIngredients — verification: wrong food id/name', () => {
+  it('detects a valid foodId resolving to a different canonical food name and restores the original recipe', async () => {
+    mockPatchRecipe
+      .mockResolvedValueOnce({
+        recipeIngredient: [{ food: { id: 'tomato-id', name: 'tomato' } }],
+      })
+      .mockResolvedValueOnce({ recipeIngredient: ORIGINAL_RECIPE.recipeIngredient });
+
+    await expect(
+      updateRecipeIngredients('chicken-shawarma', [{ foodId: 'tomato-id', foodName: 'cilantro' }]),
+    ).rejects.toThrow(/requested foodId 'tomato-id'.*persisted food 'tomato-id' named 'tomato'/s);
+
+    expect(mockPatchRecipe).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('updateRecipeIngredients — verification: nonexistent unit id', () => {
+  it('detects a requested unit association coming back null and restores the original recipe', async () => {
+    mockPatchRecipe
+      .mockResolvedValueOnce({ recipeIngredient: [{ food: null, unit: null }] })
+      .mockResolvedValueOnce({ recipeIngredient: ORIGINAL_RECIPE.recipeIngredient });
+
+    await expect(
+      updateRecipeIngredients('chicken-shawarma', [{ unitId: 'unit-x', unitName: 'tablespoon' }]),
+    ).rejects.toThrow(/unitId 'unit-x'.*no unit association/s);
+
+    expect(mockPatchRecipe).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('updateRecipeIngredients — verification: wrong unit id/name', () => {
+  it('detects a persisted unit identity contradicting the requested unit name', async () => {
+    mockPatchRecipe
+      .mockResolvedValueOnce({ recipeIngredient: [{ food: null, unit: { id: 'unit-x', name: 'cup' } }] })
+      .mockResolvedValueOnce({ recipeIngredient: ORIGINAL_RECIPE.recipeIngredient });
+
+    await expect(
+      updateRecipeIngredients('chicken-shawarma', [{ unitId: 'unit-x', unitName: 'tablespoon' }]),
+    ).rejects.toThrow(/unitId 'unit-x'.*persisted unit 'unit-x' named 'cup'/s);
+  });
+});
+
+describe('updateRecipeIngredients — verification: ingredient count mismatch', () => {
+  it('fails and restores the original recipe when the persisted count is fewer than requested', async () => {
+    mockPatchRecipe
+      .mockResolvedValueOnce({
+        recipeIngredient: [{ note: 'a' }, { note: 'b' }, { note: 'c' }, { note: 'd' }],
+      })
+      .mockResolvedValueOnce({ recipeIngredient: ORIGINAL_RECIPE.recipeIngredient });
+
+    await expect(
+      updateRecipeIngredients('chicken-shawarma', [
+        { note: 'a' },
+        { note: 'b' },
+        { note: 'c' },
+        { note: 'd' },
+        { note: 'e' },
+      ]),
+    ).rejects.toThrow(/Requested 5 ingredient\(s\) but Mealie persisted 4/);
+
+    expect(mockPatchRecipe).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('updateRecipeIngredients — verification: rollback failure', () => {
+  it('surfaces both the verification failure and the rollback failure distinctly', async () => {
+    mockPatchRecipe
+      .mockResolvedValueOnce({ recipeIngredient: [{ food: null }] })
+      .mockRejectedValueOnce(new Error('Mealie API error 500: Internal Server Error'));
+
+    let caught: unknown;
+    try {
+      await updateRecipeIngredients('chicken-shawarma', [{ foodId: 'food-x', foodName: 'cilantro' }]);
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(IngredientVerificationError);
+    const error = caught as InstanceType<typeof IngredientVerificationError>;
+    expect(error.rollbackSucceeded).toBe(false);
+    expect(error.rollbackError).toMatch(/500/);
+    expect(error.message).toMatch(/verification failed/i);
+    expect(error.message).toMatch(/rollback.*also failed/i);
+    expect(error.message).toMatch(/manual inspection/i);
+  });
+});
+
+describe('updateRecipeIngredients — regression: section rows still supported', () => {
+  it('accepts a title-only section row with no food/unit', async () => {
+    mockPatchRecipe.mockResolvedValue({ recipeIngredient: [{ title: 'For the sauce', food: null, unit: null }] });
+    await expect(
+      updateRecipeIngredients('chicken-shawarma', [{ title: 'For the sauce' }]),
+    ).resolves.toBeDefined();
   });
 });
 
@@ -234,7 +507,8 @@ describe('updateRecipeIngredientsBatch — basic behavior', () => {
     expect(result.requestedCount).toBe(2);
     expect(result.succeededCount).toBe(2);
     expect(result.failedCount).toBe(0);
-    expect(result.apiRequestCount).toBe(2);
+    // Each successful recipe now costs 1 GET (rollback snapshot) + 1 PATCH (write) = 2 requests.
+    expect(result.apiRequestCount).toBe(4);
     expect(result.results.map((r) => r.slug)).toEqual(['recipe-a', 'recipe-b']);
     expect(result.results[0]).toEqual({ slug: 'recipe-a', success: true, ingredientCount: 2 });
     expect(result.results[1]).toEqual({ slug: 'recipe-b', success: true, ingredientCount: 1 });
@@ -289,11 +563,11 @@ describe('updateRecipeIngredientsBatch — basic behavior', () => {
 
 describe('updateRecipeIngredientsBatch — failure isolation', () => {
   it('recipe 2 fails with 404, recipes 1 and 3 stay successful', async () => {
-    mockPatchRecipe.mockImplementation((slug: string) => {
+    mockPatchRecipe.mockImplementation((slug: string, data: Record<string, unknown>) => {
       if (slug === 'recipe-2') {
         return Promise.reject(new MealieApiError(404, 'Not Found'));
       }
-      return Promise.resolve({ slug, recipeIngredient: [] });
+      return Promise.resolve({ slug, recipeIngredient: data.recipeIngredient });
     });
 
     const result = await updateRecipeIngredientsBatch([
@@ -316,11 +590,11 @@ describe('updateRecipeIngredientsBatch — failure isolation', () => {
   });
 
   it('recipe 2 fails with 422, siblings still succeed', async () => {
-    mockPatchRecipe.mockImplementation((slug: string) => {
+    mockPatchRecipe.mockImplementation((slug: string, data: Record<string, unknown>) => {
       if (slug === 'recipe-2') {
         return Promise.reject(new MealieApiError(422, 'Unprocessable Entity'));
       }
-      return Promise.resolve({ slug, recipeIngredient: [] });
+      return Promise.resolve({ slug, recipeIngredient: data.recipeIngredient });
     });
 
     const result = await updateRecipeIngredientsBatch([
@@ -338,11 +612,11 @@ describe('updateRecipeIngredientsBatch — failure isolation', () => {
   });
 
   it('recipe 2 fails with 502 (transient upstream failure), siblings still succeed', async () => {
-    mockPatchRecipe.mockImplementation((slug: string) => {
+    mockPatchRecipe.mockImplementation((slug: string, data: Record<string, unknown>) => {
       if (slug === 'recipe-2') {
         return Promise.reject(new MealieApiError(502, 'Bad Gateway'));
       }
-      return Promise.resolve({ slug, recipeIngredient: [] });
+      return Promise.resolve({ slug, recipeIngredient: data.recipeIngredient });
     });
 
     const result = await updateRecipeIngredientsBatch([
@@ -377,11 +651,11 @@ describe('updateRecipeIngredientsBatch — failure isolation', () => {
   });
 
   it('one failed item does not roll back or prevent previously/subsequently successful writes', async () => {
-    mockPatchRecipe.mockImplementation((slug: string) => {
+    mockPatchRecipe.mockImplementation((slug: string, data: Record<string, unknown>) => {
       if (slug === 'recipe-2') {
         return Promise.reject(new MealieApiError(502, 'Bad Gateway'));
       }
-      return Promise.resolve({ slug, recipeIngredient: [] });
+      return Promise.resolve({ slug, recipeIngredient: data.recipeIngredient });
     });
 
     await updateRecipeIngredientsBatch([
@@ -392,6 +666,78 @@ describe('updateRecipeIngredientsBatch — failure isolation', () => {
 
     expect(mockPatchRecipe).toHaveBeenCalledWith('recipe-1', expect.anything());
     expect(mockPatchRecipe).toHaveBeenCalledWith('recipe-3', expect.anything());
+  });
+});
+
+describe('updateRecipeIngredientsBatch — verification isolation across recipes', () => {
+  it('recipe A valid, recipe B fails verification and rolls back, recipe C still succeeds, order preserved', async () => {
+    mockGetRecipe.mockImplementation((slug: string) =>
+      Promise.resolve({ slug, recipeIngredient: [{ note: `${slug} original` }] }),
+    );
+    mockPatchRecipe.mockImplementation((slug: string, data: Record<string, unknown>) => {
+      if (slug === 'recipe-b') {
+        // First call for B is the write (returns a dropped food association); second is the rollback.
+        const isRollback = (data.recipeIngredient as unknown[])[0] &&
+          (data.recipeIngredient as Record<string, unknown>[])[0].note === 'recipe-b original';
+        if (isRollback) return Promise.resolve(data);
+        return Promise.resolve({ recipeIngredient: [{ food: null }] });
+      }
+      return Promise.resolve(data);
+    });
+
+    const result = await updateRecipeIngredientsBatch([
+      { slug: 'recipe-a', ingredients: [{ note: 'a' }] },
+      { slug: 'recipe-b', ingredients: [{ foodId: 'food-x', foodName: 'cilantro' }] },
+      { slug: 'recipe-c', ingredients: [{ note: 'c' }] },
+    ]);
+
+    expect(result.results.map((r) => r.slug)).toEqual(['recipe-a', 'recipe-b', 'recipe-c']);
+    expect(result.results[0]).toMatchObject({ slug: 'recipe-a', success: true });
+    expect(result.results[2]).toMatchObject({ slug: 'recipe-c', success: true });
+
+    const failedB = result.results[1];
+    expect(failedB.success).toBe(false);
+    if (!failedB.success) {
+      expect(failedB.error.rollbackSucceeded).toBe(true);
+      expect(failedB.error.message).toMatch(/no food association/);
+    }
+    expect(result.succeededCount).toBe(2);
+    expect(result.failedCount).toBe(1);
+
+    // Recipe B: 1 GET + 1 write PATCH + 1 rollback PATCH = 3 requests.
+    const recipeBCalls = mockPatchRecipe.mock.calls.filter((c) => c[0] === 'recipe-b');
+    expect(recipeBCalls).toHaveLength(2);
+  });
+
+  it('reports the more severe rollback-failed state for recipe B while A/C remain unaffected', async () => {
+    mockGetRecipe.mockImplementation((slug: string) =>
+      Promise.resolve({ slug, recipeIngredient: [{ note: `${slug} original` }] }),
+    );
+    mockPatchRecipe.mockImplementation((slug: string, data: Record<string, unknown>) => {
+      if (slug === 'recipe-b') {
+        const isRollbackAttempt = (data.recipeIngredient as Record<string, unknown>[])[0]?.note === 'recipe-b original';
+        if (isRollbackAttempt) return Promise.reject(new Error('Mealie API error 500: Internal Server Error'));
+        return Promise.resolve({ recipeIngredient: [{ food: null }] });
+      }
+      return Promise.resolve(data);
+    });
+
+    const result = await updateRecipeIngredientsBatch([
+      { slug: 'recipe-a', ingredients: [{ note: 'a' }] },
+      { slug: 'recipe-b', ingredients: [{ foodId: 'food-x', foodName: 'cilantro' }] },
+      { slug: 'recipe-c', ingredients: [{ note: 'c' }] },
+    ]);
+
+    expect(result.results[0]).toMatchObject({ slug: 'recipe-a', success: true });
+    expect(result.results[2]).toMatchObject({ slug: 'recipe-c', success: true });
+
+    const failedB = result.results[1];
+    expect(failedB.success).toBe(false);
+    if (!failedB.success) {
+      expect(failedB.error.rollbackSucceeded).toBe(false);
+      expect(failedB.error.rollbackError).toMatch(/500/);
+      expect(failedB.error.message).toMatch(/manual inspection/i);
+    }
   });
 });
 
@@ -416,6 +762,7 @@ describe('updateRecipeIngredientsBatch — validation', () => {
       slug: `recipe-${i}`,
       ingredients: [],
     }));
+    mockPatchRecipe.mockImplementation((slug: string) => Promise.resolve({ slug, recipeIngredient: [] }));
 
     const result = await updateRecipeIngredientsBatch(updates);
     expect(result.requestedCount).toBe(RECIPE_INGREDIENTS_BATCH_MAX_SIZE);

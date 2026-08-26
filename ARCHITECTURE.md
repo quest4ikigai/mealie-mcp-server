@@ -44,6 +44,32 @@ Instruction *content* (text, title, summary, `ingredientReferences`) is preserve
 
 Confirmed directly against the `RecipeIngredientModel` ORM definition — there is no `display` database column. Mealie's `format_display` validator only recomputes the field when it's empty, but since nothing ever persists a supplied value, it reads back empty (and gets recomputed) on every subsequent load, including the response to the very same write that supplied it. Kept as an accepted/forwarded field for forward compatibility in case a future Mealie version starts persisting it, but never treat a round-tripped `display` value as authoritative.
 
+### A `foodId`/`unitId` can be accepted and still silently corrupt the association
+
+Confirmed by live testing against a real Mealie instance via `update_recipe_ingredients`: a syntactically valid UUID that does not correspond to any existing food was accepted by the write with no error, and the persisted ingredient came back with `food: null` — a previously structured ingredient silently became unparsed, while unrelated fields (`note`, `originalText`) were preserved. Separately, a valid food UUID paired with a mismatched `foodName` (an existing tomato's ID given the name `"cilantro"`) was also accepted silently, and the persisted ingredient's `food.name` came back as the UUID's actual name (`"tomato"`) — the ID won, and the supplied name was discarded with no indication anything was wrong. Both cases previously left `update_recipe_ingredients` and `update_recipe_ingredients_batch` reporting a plain success. See [Post-Write Ingredient Verification](#post-write-ingredient-verification) below for how this MCP now guards against it.
+
+## Post-Write Ingredient Verification
+
+`update_recipe_ingredients`/`update_recipe_ingredients_batch` don't pre-validate every `foodId`/`unitId` against Mealie before writing — that would add a GET per referenced food/unit to every call, which defeats the point of writing structured ingredients in bulk (and would need its own caching/deduplication to stay reasonable). Instead, both tools verify the *response* Mealie already returns from the write, since that response already contains the persisted `recipeIngredient` collection.
+
+The write path is: fetch the recipe (`GET`, also captured as the rollback snapshot) → write the requested `recipeIngredient` collection (`PATCH`) → verify the returned collection. Verification is deterministic and intentionally narrow — it is not a general recipe diff:
+
+- **Count.** The persisted ingredient count must equal the requested count.
+- **Food.** For any ingredient that supplied a `foodId` (and thus, per the existing pairing rule, a `foodName`), the persisted ingredient's `food` must be non-null, its `id` must equal the requested `foodId`, and its name must be compatible with the requested `foodName` — case-insensitive equality against the persisted food's `name` or `pluralName` (its stored `aliases`, already present on the returned entity at no extra request cost, count too). An ingredient with no `foodId` requires no food association, preserving section headings and other legitimately food-less rows.
+- **Unit.** Same shape, for `unitId`/`unitName` — compatible names are the persisted unit's `name`, `pluralName`, `abbreviation`, `pluralAbbreviation`, or stored `aliases`. An ingredient with no `unitId` requires no unit, preserving legitimate unitless countables (`4 eggs`, `2 lemons`).
+- **Pairing.** Requested and persisted ingredients are matched positionally (`requested[i]` ↔ `persisted[i]`) — this writer always sends the array as a complete ordered replacement, and nothing in observed Mealie behavior suggests it reorders `recipeIngredient` rows on write.
+
+Fields Mealie is known to normalize on its own — `display`, empty-string/`null` handling, formatting — are deliberately not compared.
+
+If verification fails, the MCP makes a best-effort attempt to `PATCH` the recipe back to the exact `recipeIngredient` collection captured by the initial fetch, then reports the write as failed either way — a corrupted structured association is never reported as a success, even though the underlying Mealie write technically went through. If that rollback attempt itself fails, the error says so explicitly (`rollbackSucceeded: false`, plus the rollback attempt's own error) instead of silently leaving the recipe half-written. `update_recipe_ingredients_batch` reuses this exact same per-recipe write path; a verification failure and its rollback are scoped to that one recipe and never affect siblings in the same batch call.
+
+**Request cost.** A successful write costs 1 `GET` + 1 `PATCH`, same as if the rollback snapshot were unconditionally fetched — no per-ingredient food/unit lookup is ever made. A verification failure adds exactly one more `PATCH` (the rollback attempt). No vocabulary lookups are performed at any point by this code path.
+
+**Known limitations, not addressed here:**
+
+- **Stale-snapshot rollback.** If another actor edits the same recipe between the initial `GET` and this write, a rollback restores the snapshot this call read, not necessarily the latest state. This is an existing limitation of this writer's read-modify-write shape, not something introduced or fixed here — no optimistic concurrency/versioning is implemented.
+- **Instruction ID churn.** A rollback is itself a recipe `PATCH`, so it triggers the same `recipeInstructions[].id` regeneration described above — a failed write followed by a rollback can churn instruction IDs twice in one call. Instruction content still survives correctly either time.
+
 ## Why Ingredient Parsing Can't Pre-Filter Cheaply
 
 `get_recipes_for_classification` can filter cheaply because the list endpoint's response already embeds `recipeCategory`/`tags` for every recipe. Mealie's `/api/recipes` list response does **not** include `recipeIngredient` at all — this codebase's own `get_recipe_concise` tool has to call the full `getRecipe(slug)` and trim client-side for the same reason, since there is no server-side field-selection/projection param. That means `get_recipes_for_ingredient_parsing` genuinely needs a detail fetch for every scanned recipe, not just matches — fetched in small batches (`DETAIL_FETCH_BATCH_SIZE`, `src/lib/recipe-ingredient-parsing.ts`) with the same bounded concurrency as everything else, rather than loading the whole collection into memory or firing every request at once.
