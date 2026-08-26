@@ -4,6 +4,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 vi.mock('../api/units.js', () => ({
   getUnits: vi.fn(),
   getUnit: vi.fn(),
+  getUnitMatches: vi.fn(),
   createUnit: vi.fn(),
   updateUnit: vi.fn(),
   deleteUnit: vi.fn(),
@@ -42,6 +43,7 @@ function schemaFor(calls: Map<string, unknown[]>, name: string): Record<string, 
 
 const mockGetUnits = vi.mocked(unitsApi.getUnits);
 const mockGetUnit = vi.mocked(unitsApi.getUnit);
+const mockGetUnitMatches = vi.mocked(unitsApi.getUnitMatches);
 const mockCreateUnit = vi.mocked(unitsApi.createUnit);
 const mockUpdateUnit = vi.mocked(unitsApi.updateUnit);
 const mockDeleteUnit = vi.mocked(unitsApi.deleteUnit);
@@ -56,9 +58,10 @@ beforeEach(() => {
 });
 
 describe('registration', () => {
-  it('registers all five unit tools', () => {
+  it('registers all six unit tools', () => {
     expect(calls.has('get_units')).toBe(true);
     expect(calls.has('get_unit')).toBe(true);
+    expect(calls.has('get_unit_matches')).toBe(true);
     expect(calls.has('create_unit')).toBe(true);
     expect(calls.has('update_unit')).toBe(true);
     expect(calls.has('delete_unit')).toBe(true);
@@ -67,6 +70,9 @@ describe('registration', () => {
   it('uses the intended public parameter names for each tool', () => {
     expect(Object.keys(schemaFor(calls, 'get_units')).sort()).toEqual(['page', 'perPage', 'search'].sort());
     expect(Object.keys(schemaFor(calls, 'get_unit'))).toEqual(['unitId']);
+    expect(Object.keys(schemaFor(calls, 'get_unit_matches')).sort()).toEqual(
+      ['queries', 'maxMatchesPerQuery'].sort(),
+    );
     expect(Object.keys(schemaFor(calls, 'create_unit')).sort()).toEqual(
       [
         'name',
@@ -150,6 +156,57 @@ describe('get_unit tool', () => {
     const response = await handler({ unitId: 'missing-id' });
     expect(response.isError).toBe(true);
     expect(response.content[0].text).toMatch(/Unit not found/);
+  });
+});
+
+describe('get_unit_matches tool', () => {
+  it('passes queries and maxMatchesPerQuery through and returns the result', async () => {
+    const result = {
+      matches: [{ query: 'tablespoon', items: [], truncated: false }],
+      queryCount: 1,
+      uniqueQueryCount: 1,
+      matchedCount: 0,
+      apiRequestCount: 1,
+    };
+    mockGetUnitMatches.mockResolvedValue(result);
+
+    const handler = handlerFor(calls, 'get_unit_matches');
+    const response = await handler({ queries: ['tablespoon'], maxMatchesPerQuery: 5 });
+
+    expect(mockGetUnitMatches).toHaveBeenCalledWith(['tablespoon'], { maxMatchesPerQuery: 5 });
+    expect(response.isError).toBeUndefined();
+    expect(JSON.parse(response.content[0].text)).toEqual(result);
+  });
+
+  it('surfaces validation errors as an error response', async () => {
+    mockGetUnitMatches.mockRejectedValue(new Error('At least one query is required.'));
+    const handler = handlerFor(calls, 'get_unit_matches');
+    const response = await handler({ queries: [] });
+    expect(response.isError).toBe(true);
+    expect(response.content[0].text).toMatch(/At least one query is required/);
+  });
+
+  it('surfaces API errors as an error response', async () => {
+    mockGetUnitMatches.mockRejectedValue(new Error('Unable to look up unit matches: Mealie API error 500: boom'));
+    const handler = handlerFor(calls, 'get_unit_matches');
+    const response = await handler({ queries: ['tablespoon'] });
+    expect(response.isError).toBe(true);
+    expect(response.content[0].text).toMatch(/Unable to look up unit matches/);
+  });
+
+  it('never creates, updates, or deletes a unit — read-only', async () => {
+    mockGetUnitMatches.mockResolvedValue({
+      matches: [],
+      queryCount: 0,
+      uniqueQueryCount: 0,
+      matchedCount: 0,
+      apiRequestCount: 0,
+    });
+    const handler = handlerFor(calls, 'get_unit_matches');
+    await handler({ queries: ['tablespoon'] });
+    expect(mockCreateUnit).not.toHaveBeenCalled();
+    expect(mockUpdateUnit).not.toHaveBeenCalled();
+    expect(mockDeleteUnit).not.toHaveBeenCalled();
   });
 });
 

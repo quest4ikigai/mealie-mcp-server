@@ -1,4 +1,12 @@
 import { apiGet, apiPost, apiPut, apiDelete, formatParams, MealieApiError, PaginatedResult } from './client.js';
+import {
+  lookupCandidates,
+  LookupValidationError,
+  DEFAULT_MAX_MATCHES_PER_QUERY,
+  MAX_MATCHES_PER_QUERY_CAP,
+  type MatchFieldSpec,
+  type MultiQueryLookupResult,
+} from '../lib/multi-query-lookup.js';
 
 export interface CreateUnitInput {
   name: string;
@@ -163,6 +171,41 @@ export async function updateUnit(
       wrapError(`Unit not found: ${id}`, error);
     }
     wrapError(`Unable to update unit ${id}`, error);
+  }
+}
+
+// Priority order for get_unit_matches ranking, mirroring Mealie's own IngredientUnit search fields
+// (name, pluralName, abbreviation, pluralAbbreviation) plus aliases, which that search never checks.
+// Attribute paths are Mealie's queryFilter attribute-chain syntax; "aliases.name" traverses the unit's
+// alias relationship (a real SQLAlchemy relationship, not an association proxy, so the join is valid).
+const UNIT_MATCH_FIELDS: MatchFieldSpec[] = [
+  { key: 'name', queryFilterAttr: 'name' },
+  { key: 'pluralName', queryFilterAttr: 'pluralName' },
+  { key: 'abbreviation', queryFilterAttr: 'abbreviation' },
+  { key: 'pluralAbbreviation', queryFilterAttr: 'pluralAbbreviation' },
+  { key: 'alias', queryFilterAttr: 'aliases.name', isAlias: true },
+];
+
+export async function getUnitMatches(
+  queries: string[],
+  options?: { maxMatchesPerQuery?: number },
+): Promise<MultiQueryLookupResult> {
+  const maxMatchesPerQuery = Math.min(
+    Math.max(1, options?.maxMatchesPerQuery ?? DEFAULT_MAX_MATCHES_PER_QUERY),
+    MAX_MATCHES_PER_QUERY_CAP,
+  );
+
+  try {
+    return await lookupCandidates(queries, UNIT_MATCH_FIELDS, maxMatchesPerQuery, async (queryFilter, perPage) => {
+      const result = await apiGet<PaginatedResult<Record<string, unknown>>>(
+        '/api/units',
+        formatParams({ queryFilter, perPage, page: 1 }),
+      );
+      return { items: result.items, total: result.total };
+    });
+  } catch (error) {
+    if (error instanceof LookupValidationError) throw error;
+    wrapError('Unable to look up unit matches', error);
   }
 }
 
