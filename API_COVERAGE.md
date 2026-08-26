@@ -2,16 +2,16 @@
 
 | Category | Tools |
 |---|---|
-| Recipes | 17 |
+| Recipes | 18 |
 | Meal Plans | 6 |
 | Categories | 7 |
 | Tags | 7 |
 | Shopping Lists | 13 |
 | Foods | 6 |
 | Units | 6 |
-| **Total** | **62** |
+| **Total** | **63** |
 
-## Recipes Operations (17)
+## Recipes Operations (18)
 
 - `create_recipe` — POST /api/recipes, PUT /api/recipes/{slug}
   Creates a new recipe. Optionally sets ingredients and instructions on creation.
@@ -65,6 +65,9 @@
 
 - `update_recipe_ingredients` — PATCH /api/recipes/{slug}
   Replaces the complete structured ingredient collection (recipeIngredient) of an existing recipe, leaving 
+
+- `update_recipe_ingredients_batch` — PATCH /api/recipes/{slug}
+  Runs update_recipe_ingredients for multiple recipes with bounded concurrency (5 at a time). Use this 
 
 - `update_recipe_taxonomy` — GET /api/organizers/categories, POST /api/organizers/categories, GET /api/organizers/tags, POST /api/organizers/tags, GET /api/recipes/{slug}, PATCH /api/recipes/{slug}
   Updates a recipe\

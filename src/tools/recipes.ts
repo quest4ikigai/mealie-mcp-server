@@ -10,7 +10,11 @@ import {
   CLASSIFICATION_MAX_LIMIT,
   CLASSIFICATION_DEFAULT_TAXONOMY_STATE,
 } from '../lib/recipe-classification.js';
-import { updateRecipeIngredients } from '../lib/recipe-ingredients.js';
+import {
+  updateRecipeIngredients,
+  updateRecipeIngredientsBatch,
+  RECIPE_INGREDIENTS_BATCH_MAX_SIZE,
+} from '../lib/recipe-ingredients.js';
 import {
   getRecipesForIngredientParsing,
   INGREDIENT_PARSING_DEFAULT_LIMIT,
@@ -518,6 +522,59 @@ export function registerRecipeTools(server: McpServer) {
     async ({ slug, ingredients }) => {
       try {
         const result = await updateRecipeIngredients(slug, ingredients);
+        return successResponse(result);
+      } catch (error) {
+        return errorResponse(error);
+      }
+    },
+  );
+
+  // @endpoints PATCH /api/recipes/{slug}
+  server.tool(
+    'update_recipe_ingredients_batch',
+    'Runs update_recipe_ingredients for multiple recipes with bounded concurrency (5 at a time). Use this ' +
+      'once several recipes already have COMPLETE, resolved ingredient collections ready to persist — e.g. ' +
+      'after batch-resolving food/unit concepts with get_food_matches/get_unit_matches across many recipes — ' +
+      'to avoid one individual write call per recipe. Same low-level write semantics as the singular tool, ' +
+      'applied independently per entry: each item\'s "ingredients" is that recipe\'s complete new ' +
+      'recipeIngredient list (not a patch — any ingredient omitted is removed), foodId/unitId must already ' +
+      'reference existing Mealie entities (this tool never looks up, matches, or creates foods/units), and ' +
+      'referenceIds are preserved exactly as supplied. There is no cross-recipe transaction: recipes are ' +
+      'processed independently, a failure on one (a 404/422/502 from Mealie, or a local validation error like ' +
+      'a mismatched foodId/foodName) does not stop or roll back the others, and the response reports a ' +
+      'success/failure result per recipe in the same order submitted. The whole call is rejected before any ' +
+      `write starts only for a true request-shape problem — an empty batch, more than ` +
+      `${RECIPE_INGREDIENTS_BATCH_MAX_SIZE} recipes, a missing slug, or the same slug repeated in one call. ` +
+      'The same recipeInstructions-id-regeneration caveat as update_recipe_ingredients applies to every ' +
+      'recipe touched here (instruction content is preserved, only ids churn).',
+    {
+      updates: z
+        .array(
+          z.object({
+            slug: z.string().describe('Slug of the recipe to update.'),
+            ingredients: z
+              .array(recipeIngredientInputSchema)
+              .describe(
+                'Complete desired ingredient collection for this recipe, in order — replaces its entire ' +
+                  'recipeIngredient list. An empty array clears all ingredients for this recipe.',
+              ),
+          }),
+        )
+        .min(1, `At least one recipe update is required.`)
+        .max(
+          RECIPE_INGREDIENTS_BATCH_MAX_SIZE,
+          `At most ${RECIPE_INGREDIENTS_BATCH_MAX_SIZE} recipes are allowed per batch call.`,
+        )
+        .describe(
+          'One entry per recipe to update, each with its own complete ingredient collection. Each recipe is ' +
+            'processed independently with bounded concurrency (5 at a time) — a failure on one recipe does not ' +
+            `abort the others. Max ${RECIPE_INGREDIENTS_BATCH_MAX_SIZE} recipes per call; each slug must be unique ` +
+            'within the call.',
+        ),
+    },
+    async ({ updates }) => {
+      try {
+        const result = await updateRecipeIngredientsBatch(updates);
         return successResponse(result);
       } catch (error) {
         return errorResponse(error);
