@@ -1,3 +1,10 @@
+# [1.11.0](https://github.com/timo-reymann/mealie-mcp-server/compare/v1.10.0...v1.11.0) (2026-08-26)
+
+
+### Features
+
+* auto-generate API_COVERAGE.md and README tool list from source ([a309d90](https://github.com/timo-reymann/mealie-mcp-server/commit/a309d9030bb5de2d431dca4ec4d0cac54eb55a68))
+
 # [1.10.0](https://github.com/timo-reymann/mealie-mcp-server/compare/v1.9.0...v1.10.0) (2026-08-26)
 
 
