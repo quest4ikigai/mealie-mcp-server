@@ -1,3 +1,11 @@
+# [1.10.0](https://github.com/timo-reymann/mealie-mcp-server/compare/v1.9.0...v1.10.0) (2026-08-26)
+
+
+### Features
+
+* add get_recipes_for_ingredient_parsing tool ([#17](https://github.com/timo-reymann/mealie-mcp-server/issues/17)) ([24e3672](https://github.com/timo-reymann/mealie-mcp-server/commit/24e3672d67f066ec7487b46dfac4d3b2f9078527))
+* add unit CRUD tools (get_units, get_unit, create_unit, update_unit, delete_unit) ([#15](https://github.com/timo-reymann/mealie-mcp-server/issues/15)) ([eecdd6c](https://github.com/timo-reymann/mealie-mcp-server/commit/eecdd6c1eecbad1ea77d3371502521d28ec4d385))
+
 # [1.9.0](https://github.com/timo-reymann/mealie-mcp-server/compare/v1.8.0...v1.9.0) (2026-08-20)
 
 
