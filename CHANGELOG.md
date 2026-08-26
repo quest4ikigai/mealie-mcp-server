@@ -1,3 +1,10 @@
+# [1.13.0](https://github.com/timo-reymann/mealie-mcp-server/compare/v1.12.0...v1.13.0) (2026-08-26)
+
+
+### Features
+
+* [[#18](https://github.com/timo-reymann/mealie-mcp-server/issues/18)] add patch_mealplan tool for batch meal plan operations ([#20](https://github.com/timo-reymann/mealie-mcp-server/issues/20)) ([e9e6e96](https://github.com/timo-reymann/mealie-mcp-server/commit/e9e6e966d2b80e1a9223b518712bc9c8f78e7556))
+
 # [1.12.0](https://github.com/timo-reymann/mealie-mcp-server/compare/v1.11.0...v1.12.0) (2026-08-26)
 
 
