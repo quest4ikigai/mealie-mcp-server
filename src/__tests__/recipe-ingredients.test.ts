@@ -488,6 +488,145 @@ describe('updateRecipeIngredients — verification: rollback failure', () => {
   });
 });
 
+// Regression coverage for a live bug: Mealie's recipe_ingredient.reference_id column is nullable
+// with no stored default (mealie-recipes/mealie#7072, fixed by mealie-recipes/mealie PR #7139 with
+// a `reference_id or uuid4()` schema validator). For a row whose reference_id was never durably
+// pinned, that validator synthesizes a *fresh random UUID on every independent read* — never
+// persisting it just by being read. This writer's own pre-write GET (the rollback snapshot) is a
+// separate read from whatever the caller's own earlier get_recipe_detailed call saw, so for such a
+// row the two reads can disagree even though neither is "wrong". The write that gets rolled back
+// already carried the caller's requested referenceId through to Mealie and durably persisted it —
+// so rollback must prefer that requested value over the writer's own (possibly different,
+// possibly-synthesized) pre-write snapshot value, never the other way around.
+describe('updateRecipeIngredients — rollback preserves every requested referenceId, even when the pre-write snapshot disagrees', () => {
+  it('restores using each ingredient\'s requested referenceId, not a differing value from the pre-write snapshot (unit verification failure)', async () => {
+    mockGetRecipe.mockResolvedValue({
+      slug: 'baked-pesto-chicken',
+      recipeIngredient: [
+        { food: { id: 'garlic-food', name: 'garlic' }, unit: null, note: 'garlic', referenceId: 'ref-garlic-original' },
+        {
+          food: { id: 'pesto-food', name: 'pesto' },
+          unit: { id: 'unit-cup', name: 'cup' },
+          note: 'pesto',
+          referenceId: 'ref-pesto-original',
+        },
+        {
+          food: { id: 'pepper-food', name: 'black pepper' },
+          unit: null,
+          note: 'black pepper',
+          // Simulates Mealie synthesizing a different display value for a never-pinned row than
+          // whatever the caller's own earlier read (and thus their request below) used.
+          referenceId: 'ref-pepper-SNAPSHOT-DRIFTED',
+        },
+      ],
+    });
+
+    mockPatchRecipe
+      .mockResolvedValueOnce({
+        recipeIngredient: [
+          { food: { id: 'garlic-food', name: 'garlic' }, unit: null },
+          { food: { id: 'pesto-food', name: 'pesto' }, unit: null }, // unit dropped -> verification failure
+          { food: { id: 'pepper-food', name: 'black pepper' }, unit: null },
+        ],
+      })
+      .mockResolvedValueOnce({ recipeIngredient: [] });
+
+    await expect(
+      updateRecipeIngredients('baked-pesto-chicken', [
+        { foodId: 'garlic-food', foodName: 'garlic', note: 'garlic', referenceId: 'ref-garlic-original' },
+        {
+          foodId: 'pesto-food',
+          foodName: 'pesto',
+          unitId: '11111111-1111-4111-8111-111111111111',
+          unitName: 'cup',
+          note: 'pesto',
+          referenceId: 'ref-pesto-original',
+        },
+        {
+          foodId: 'pepper-food',
+          foodName: 'black pepper',
+          note: 'black pepper',
+          referenceId: 'ref-pepper-original', // the caller's own known-good value
+        },
+      ]),
+    ).rejects.toThrow(IngredientVerificationError);
+
+    expect(mockPatchRecipe).toHaveBeenCalledTimes(2);
+    const [, rollbackPayload] = mockPatchRecipe.mock.calls[1];
+    const rollbackIngredients = rollbackPayload.recipeIngredient as Record<string, unknown>[];
+
+    expect(rollbackIngredients.map((i) => i.referenceId)).toEqual([
+      'ref-garlic-original',
+      'ref-pesto-original',
+      'ref-pepper-original', // NOT 'ref-pepper-SNAPSHOT-DRIFTED'
+    ]);
+
+    // Everything else the rollback restores still comes from the pre-write snapshot untouched.
+    expect(rollbackIngredients[1]).toMatchObject({
+      food: { id: 'pesto-food', name: 'pesto' },
+      unit: { id: 'unit-cup', name: 'cup' },
+      note: 'pesto',
+    });
+    expect(rollbackIngredients[2]).toMatchObject({
+      food: { id: 'pepper-food', name: 'black pepper' },
+      unit: null,
+      note: 'black pepper',
+    });
+  });
+
+  it('restores using each ingredient\'s requested referenceId on a food verification failure too (not unit-specific)', async () => {
+    mockGetRecipe.mockResolvedValue({
+      slug: 'baked-pesto-chicken',
+      recipeIngredient: [
+        {
+          food: { id: 'pesto-food', name: 'pesto' },
+          unit: { id: 'unit-cup', name: 'cup' },
+          note: 'pesto',
+          referenceId: 'ref-pesto-original',
+        },
+        {
+          food: { id: 'pepper-food', name: 'black pepper' },
+          unit: null,
+          note: 'black pepper',
+          referenceId: 'ref-pepper-SNAPSHOT-DRIFTED',
+        },
+      ],
+    });
+
+    mockPatchRecipe
+      .mockResolvedValueOnce({
+        recipeIngredient: [
+          { food: null, unit: { id: 'unit-cup', name: 'cup' } }, // food dropped -> verification failure
+          { food: { id: 'pepper-food', name: 'black pepper' }, unit: null },
+        ],
+      })
+      .mockResolvedValueOnce({ recipeIngredient: [] });
+
+    await expect(
+      updateRecipeIngredients('baked-pesto-chicken', [
+        {
+          foodId: '22222222-2222-4222-8222-222222222222',
+          foodName: 'pesto',
+          unitId: 'unit-cup',
+          unitName: 'cup',
+          note: 'pesto',
+          referenceId: 'ref-pesto-original',
+        },
+        {
+          foodId: 'pepper-food',
+          foodName: 'black pepper',
+          note: 'black pepper',
+          referenceId: 'ref-pepper-original',
+        },
+      ]),
+    ).rejects.toThrow(IngredientVerificationError);
+
+    const [, rollbackPayload] = mockPatchRecipe.mock.calls[1];
+    const rollbackIngredients = rollbackPayload.recipeIngredient as Record<string, unknown>[];
+    expect(rollbackIngredients.map((i) => i.referenceId)).toEqual(['ref-pesto-original', 'ref-pepper-original']);
+  });
+});
+
 describe('updateRecipeIngredients — regression: section rows still supported', () => {
   it('accepts a title-only section row with no food/unit', async () => {
     mockPatchRecipe.mockResolvedValue({ recipeIngredient: [{ title: 'For the sauce', food: null, unit: null }] });
@@ -738,6 +877,75 @@ describe('updateRecipeIngredientsBatch — verification isolation across recipes
       expect(failedB.error.rollbackError).toMatch(/500/);
       expect(failedB.error.message).toMatch(/manual inspection/i);
     }
+  });
+
+  it('recipe B\'s rollback preserves its requested referenceIds (not a drifted snapshot value) while A/C are unaffected and order/counts stay correct', async () => {
+    mockGetRecipe.mockImplementation((slug: string) => {
+      if (slug === 'recipe-b') {
+        return Promise.resolve({
+          slug,
+          recipeIngredient: [
+            {
+              food: { id: 'pepper-food', name: 'black pepper' },
+              unit: null,
+              note: 'black pepper',
+              referenceId: 'ref-pepper-SNAPSHOT-DRIFTED',
+            },
+          ],
+        });
+      }
+      return Promise.resolve({ slug, recipeIngredient: [{ note: `${slug} original` }] });
+    });
+
+    let recipeBCallCount = 0;
+    mockPatchRecipe.mockImplementation((slug: string, data: Record<string, unknown>) => {
+      if (slug === 'recipe-b') {
+        recipeBCallCount += 1;
+        if (recipeBCallCount === 1) {
+          // The write itself drops the requested unit association, triggering verification failure.
+          return Promise.resolve({ recipeIngredient: [{ food: { id: 'pepper-food', name: 'black pepper' }, unit: null }] });
+        }
+        return Promise.resolve(data); // rollback
+      }
+      return Promise.resolve(data);
+    });
+
+    const result = await updateRecipeIngredientsBatch([
+      { slug: 'recipe-a', ingredients: [{ note: 'a' }] },
+      {
+        slug: 'recipe-b',
+        ingredients: [
+          {
+            foodId: 'pepper-food',
+            foodName: 'black pepper',
+            unitId: '11111111-1111-4111-8111-111111111111',
+            unitName: 'cup',
+            note: 'black pepper',
+            referenceId: 'ref-pepper-original',
+          },
+        ],
+      },
+      { slug: 'recipe-c', ingredients: [{ note: 'c' }] },
+    ]);
+
+    expect(result.requestedCount).toBe(3);
+    expect(result.succeededCount).toBe(2);
+    expect(result.failedCount).toBe(1);
+    expect(result.results.map((r) => r.slug)).toEqual(['recipe-a', 'recipe-b', 'recipe-c']);
+    expect(result.results[0]).toMatchObject({ slug: 'recipe-a', success: true });
+    expect(result.results[2]).toMatchObject({ slug: 'recipe-c', success: true });
+
+    const failedB = result.results[1];
+    expect(failedB.success).toBe(false);
+    if (!failedB.success) {
+      expect(failedB.error.rollbackSucceeded).toBe(true);
+    }
+
+    const recipeBCalls = mockPatchRecipe.mock.calls.filter((c) => c[0] === 'recipe-b');
+    expect(recipeBCalls).toHaveLength(2);
+    const [, rollbackPayload] = recipeBCalls[1];
+    const rollbackIngredients = rollbackPayload.recipeIngredient as Record<string, unknown>[];
+    expect(rollbackIngredients[0].referenceId).toBe('ref-pepper-original');
   });
 });
 

@@ -228,6 +228,45 @@ interface IngredientWriteResult {
  * writer, not something this change introduces or attempts to solve (no optimistic
  * concurrency/versioning is implemented here).
  */
+
+// Mealie's `recipe_ingredient.reference_id` column is nullable with no stored default (see
+// mealie-recipes/mealie#7072 and its fix, PR #7139). For an ingredient row whose reference_id has
+// never been explicitly, durably set, Mealie's own RecipeIngredient schema synthesizes a *fresh
+// random UUID on every single read* (`value or uuid4()`) purely for that response — it is never
+// written back to the database just by reading it. Two independent GETs of such a row can
+// therefore legitimately return two different referenceId values.
+//
+// This matters here because our rollback snapshot (`original`, fetched by this writer's own GET)
+// is necessarily a *different* read than whatever the caller's own earlier get_recipe_detailed
+// call saw when it built its request — so for a never-pinned ingredient, `original`'s referenceId
+// can differ from the caller's `requested` referenceId for that same row, even though neither read
+// is "wrong". The write we just attempted (the one that failed overall verification) already
+// carried the caller's own referenceId values through to Mealie and durably persisted them for
+// every row Mealie accepted structurally — which is every row, since only the food/unit
+// association can be silently dropped/misresolved, never the ingredient row itself. Blindly
+// resending our own pre-write GET snapshot for rollback would overwrite that just-persisted,
+// caller-intended value with an unrelated, arbitrary one for any row that was never pinned before.
+//
+// So: when building the rollback payload, prefer the *requested* ingredient's own referenceId at
+// each position (it's what the caller actually asked for and what Mealie just durably persisted)
+// and fall back to the pre-write snapshot's value only when the caller didn't supply one for that
+// position. For every ingredient with an already-durable referenceId, both sources agree and this
+// is a no-op. This is not "regenerating" anything — it's picking the more authoritative of two
+// already-observed values, never inventing a new one.
+function buildRollbackIngredients(
+  requested: RecipeIngredientInput[],
+  originalIngredients: unknown[],
+): unknown[] {
+  return originalIngredients.map((entry, i) => {
+    if (!entry || typeof entry !== 'object') return entry;
+
+    const requestedReferenceId = requested[i]?.referenceId?.trim();
+    if (!requestedReferenceId) return entry;
+
+    return { ...(entry as Record<string, unknown>), referenceId: requestedReferenceId };
+  });
+}
+
 async function writeVerifiedIngredients(
   slug: string,
   ingredients: RecipeIngredientInput[],
@@ -253,8 +292,9 @@ async function writeVerifiedIngredients(
   }
 
   const originalIngredient = Array.isArray(original.recipeIngredient) ? original.recipeIngredient : [];
+  const rollbackIngredient = buildRollbackIngredients(ingredients, originalIngredient);
   try {
-    await recipesApi.patchRecipe(slug, { recipeIngredient: originalIngredient });
+    await recipesApi.patchRecipe(slug, { recipeIngredient: rollbackIngredient });
     requestCount += 1;
   } catch (rollbackError) {
     requestCount += 1;
