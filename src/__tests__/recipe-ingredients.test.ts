@@ -1055,7 +1055,7 @@ describe('updateRecipeIngredientsBatch — basic behavior', () => {
     expect(result.requestedCount).toBe(2);
     expect(result.succeededCount).toBe(2);
     expect(result.failedCount).toBe(0);
-    expect(result.apiRequestCount).toBe(2);
+    expect(result.apiRequestCount).toBe(4);
     expect(result.results.map((r) => r.slug)).toEqual(['recipe-a', 'recipe-b']);
     expect(result.results[0]).toEqual({ slug: 'recipe-a', success: true, ingredientCount: 2 });
     expect(result.results[1]).toEqual({ slug: 'recipe-b', success: true, ingredientCount: 1 });
@@ -1114,7 +1114,7 @@ describe('updateRecipeIngredientsBatch — failure isolation', () => {
       if (slug === 'recipe-2') {
         return Promise.reject(new MealieApiError(404, 'Not Found'));
       }
-      return Promise.resolve({ slug, recipeIngredient: [] });
+      return Promise.resolve({ slug, recipeIngredient: [{ note: 'persisted' }] });
     });
 
     const result = await updateRecipeIngredientsBatch([
@@ -1141,7 +1141,7 @@ describe('updateRecipeIngredientsBatch — failure isolation', () => {
       if (slug === 'recipe-2') {
         return Promise.reject(new MealieApiError(422, 'Unprocessable Entity'));
       }
-      return Promise.resolve({ slug, recipeIngredient: [] });
+      return Promise.resolve({ slug, recipeIngredient: [{ note: 'persisted' }] });
     });
 
     const result = await updateRecipeIngredientsBatch([
@@ -1163,7 +1163,7 @@ describe('updateRecipeIngredientsBatch — failure isolation', () => {
       if (slug === 'recipe-2') {
         return Promise.reject(new MealieApiError(502, 'Bad Gateway'));
       }
-      return Promise.resolve({ slug, recipeIngredient: [] });
+      return Promise.resolve({ slug, recipeIngredient: [{ note: 'persisted' }] });
     });
 
     const result = await updateRecipeIngredientsBatch([
@@ -1202,7 +1202,7 @@ describe('updateRecipeIngredientsBatch — failure isolation', () => {
       if (slug === 'recipe-2') {
         return Promise.reject(new MealieApiError(502, 'Bad Gateway'));
       }
-      return Promise.resolve({ slug, recipeIngredient: [] });
+      return Promise.resolve({ slug, recipeIngredient: [{ note: 'persisted' }] });
     });
 
     await updateRecipeIngredientsBatch([
