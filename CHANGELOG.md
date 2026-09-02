@@ -1,3 +1,15 @@
+# [1.14.0](https://github.com/timo-reymann/mealie-mcp-server/compare/v1.13.0...v1.14.0) (2026-09-02)
+
+
+### Bug Fixes
+
+* verify structured ingredient writes against Mealie's persisted response ([#23](https://github.com/timo-reymann/mealie-mcp-server/issues/23)) ([1f794d1](https://github.com/timo-reymann/mealie-mcp-server/commit/1f794d11b35e53a9c6bfd7d70b2bb0b3e3db0206)), closes [mealie-recipes/mealie#7139](https://github.com/mealie-recipes/mealie/issues/7139)
+
+
+### Features
+
+* publish server-level MCP instructions for cross-tool guidance ([#21](https://github.com/timo-reymann/mealie-mcp-server/issues/21)) ([bda5875](https://github.com/timo-reymann/mealie-mcp-server/commit/bda5875b5d6ccc2e77f818e73b4d7506a71155a6))
+
 # [1.13.0](https://github.com/timo-reymann/mealie-mcp-server/compare/v1.12.0...v1.13.0) (2026-08-26)
 
 
