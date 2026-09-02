@@ -225,6 +225,8 @@ Each ingredient accepts `quantity`, `unitId`/`unitName`, `foodId`/`foodName`, `n
 - **`recipeInstructions[].id` is regenerated on every recipe update, `PATCH` or `PUT`, no matter what.** Instruction *content* (text, title, summary, ingredient references) is preserved correctly; only the IDs churn. If your workflow depends on stable instruction IDs across ingredient updates, treat that as currently unsupported by Mealie itself — link ingredients to instructions by the ingredient's own `referenceId` instead, which Mealie does not regenerate.
 - **`display` is not actually a stored field**, despite being accepted. Mealie always recomputes it from `quantity`/`unit`/`food`/`note` when the ingredient is read, so a supplied value never round-trips literally — don't rely on it coming back as sent.
 
+**Post-write integrity verification.** Live structured-ingredient testing found that Mealie can accept a syntactically valid but nonexistent `foodId`/`unitId` and silently persist that ingredient's food/unit as `null` — and separately, that a *valid* but incorrect UUID paired with the wrong human-readable name persists the UUID's actual entity while discarding the supplied name, with no error either way. Pre-validating every `foodId`/`unitId` against Mealie before writing would add a lookup per referenced food/unit to every call, undermining the point of writing structured ingredients in bulk. Instead, this tool verifies the recipe Mealie already returns from the write: for every ingredient that supplied a `foodId`/`unitId`, the persisted food/unit must be non-null, match the given id, and match the given name (case-insensitive against `name`/`pluralName`, plus `abbreviation`/`pluralAbbreviation` for units); the persisted ingredient count must also match what was requested. Verification adds no extra API call on the successful path. If it fails, the tool makes a best-effort attempt to restore the recipe to its pre-write `recipeIngredient` collection and reports the write as failed rather than a silent success; if that restore attempt itself fails, the error says so explicitly rather than hiding it. `update_recipe_ingredients_batch` inherits this same per-recipe verification and rollback — a failure on one recipe restores only that recipe and never affects its siblings. See [Post-Write Ingredient Verification](./ARCHITECTURE.md#post-write-ingredient-verification) for the full rationale.
+
 **Replace a recipe's ingredients with two already-resolved structured entries:**
 
 ```json
@@ -250,6 +252,50 @@ Each ingredient accepts `quantity`, `unitId`/`unitName`, `foodId`/`foodName`, `n
   ]
 }
 ```
+
+### Updating Many Recipes at Once
+
+`update_recipe_ingredients_batch` runs `update_recipe_ingredients` across multiple recipes in one call, with bounded concurrency (5 at a time) and a maximum of 25 recipes per call. It is a narrow batching layer, not a new write primitive: it performs no interpretation of its own — no parsing, no food/unit matching, no food/unit creation — it only fans the same per-recipe complete-replacement write out and reports one result per recipe.
+
+**Why this exists.** A 25-recipe structured-ingredient pilot run after `get_food_matches`/`get_unit_matches` were added showed those batch-resolution tools had already removed the earlier bottleneck: 119 food concepts and 16 unit concepts across the pilot needed only a handful of matching calls in total. What was left as the dominant recurring model-visible operation was the write step — one `update_recipe_ingredients` call per recipe, which alone accounted for roughly 71% of the recurring resolution/write calls in that pilot. `update_recipe_ingredients_batch` collapses that many-calls-per-recipe-set pattern into one call, the same way `update_recipe_taxonomy_batch` already does for categories/tags.
+
+**Failure isolation.** The pilot also hit two transient nginx 502s on an unrelated multi-recipe read, which succeeded on retry — a reminder that upstream failures at this scale are expected, not exceptional. There is no cross-recipe transaction: every recipe in a batch call is attempted independently, a failure on one (a 404/422/502 from Mealie, a local validation error such as a mismatched `foodId`/`foodName`, or a post-write verification failure — see above) does not stop or roll back any other recipe, and the response reports a `success`/`failure` result per recipe in the order submitted. A verification failure's rollback is scoped to that one recipe only.
+
+**What still rejects the whole call** is a request-shape problem that makes the batch itself impossible to interpret: an empty `updates` array, more than 25 recipes, a missing/blank slug, or the same slug repeated twice in one call. Those are the only conditions where no write is attempted at all.
+
+```json
+{
+  "updates": [
+    {
+      "slug": "chicken-shawarma",
+      "ingredients": [
+        { "quantity": 1, "unitId": "5e2f...", "unitName": "lb", "foodId": "b3f1c2e0-...", "foodName": "chicken thighs" }
+      ]
+    },
+    {
+      "slug": "banana-bread",
+      "ingredients": [
+        { "quantity": 2, "unitId": "9a7d...", "unitName": "cups", "foodId": "f04a...", "foodName": "flour" }
+      ]
+    }
+  ]
+}
+```
+
+```json
+{
+  "requestedCount": 2,
+  "succeededCount": 2,
+  "failedCount": 0,
+  "results": [
+    { "slug": "chicken-shawarma", "success": true, "ingredientCount": 1 },
+    { "slug": "banana-bread", "success": true, "ingredientCount": 1 }
+  ],
+  "apiRequestCount": 2
+}
+```
+
+A failed entry instead looks like `{ "slug": "...", "success": false, "error": { "message": "...", "status": 404 } }` — `status` is included whenever the failure came from a Mealie API error, so a transient `502` can be distinguished from a real `404`/`422` and retried on just that recipe.
 
 ## Recipe Classification Workflow
 
@@ -315,11 +361,13 @@ get_recipes_for_ingredient_parsing
     ->
 model interprets ingredients (using recipe + instruction context)
     ->
-get_food_matches / get_unit_matches
+get_food_matches / get_unit_matches (batch-resolve food/unit concepts across many recipes)
     ->
-model selects canonical entities (or decides a new food/unit is needed)
+model selects canonical entities, creating only genuinely missing foods/units
     ->
-update_recipe_ingredients
+update_recipe_ingredients_batch (or update_recipe_ingredients for a single recipe)
+    ->
+inspect per-recipe failures, retry only those, and verify only what's uncertain
 ```
 
 This document covers only the first step — the read-only work queue. The detailed rules a model should use to interpret ingredient text (splitting, combining, alternatives, etc.) are intentionally not defined here; that policy lives elsewhere and this tool has no opinion on it.
@@ -328,10 +376,13 @@ The intended workflow:
 
 1. Call `get_recipes_for_ingredient_parsing` to get a page of recipes needing attention.
 2. For each ingredient, interpret its existing text (`display`/`note`/`originalText`) yourself — the MCP does not do this. Recipe instructions are included for exactly this: they can disambiguate an otherwise-ambiguous line.
-3. Resolve canonical food/unit IDs separately with `get_food_matches`/`get_unit_matches` (see [Resolving Several Foods or Units at Once](#resolving-several-foods-or-units-at-once) above) — batch, alias-aware lookups purpose-built for this step. This tool never looks up or creates foods/units itself.
-4. Decide whether a new food, unit, or alias is warranted (this tool has no opinion on that).
-5. Call `update_recipe_ingredients` (see [Updating Structured Recipe Ingredients](#updating-structured-recipe-ingredients) above) with the recipe's **complete** corrected ingredient collection. Existing `referenceId`s are stable identifiers that recipe instructions may reference — preserve one when an existing ingredient row continues to represent the same ingredient.
-6. Continue calling `get_recipes_for_ingredient_parsing` with `nextCursor` until `hasMore` is `false`.
+3. Batch-resolve the food concepts identified across the whole page with `get_food_matches`, and the unit concepts with `get_unit_matches` (see [Resolving Several Foods or Units at Once](#resolving-several-foods-or-units-at-once) above) — one call each covers every recipe in the page, not one call per concept. These tools never look up or create foods/units themselves.
+4. Create only foods/units that are genuinely missing from the match results (this queue and the matching tools have no opinion on that decision — it's the model's).
+5. Build each recipe's **complete** corrected ingredient collection, preserving existing `referenceId`s for any ingredient row that still represents the same ingredient (recipe instructions may reference them).
+6. Persist multiple recipes at once with `update_recipe_ingredients_batch` (see [Updating Many Recipes at Once](#updating-many-recipes-at-once) above), or `update_recipe_ingredients` for a single recipe. Batching here is what actually matters once steps 3-4 have already collapsed food/unit resolution to a handful of calls — the per-recipe write is otherwise the last remaining linear cost.
+7. Inspect the batch response's per-recipe results and retry only the failed slugs — a transient failure on one recipe never invalidates the recipes that already succeeded.
+8. Verify with a targeted follow-up read only where genuinely uncertain, rather than re-reading every successful recipe.
+9. Continue calling `get_recipes_for_ingredient_parsing` with `nextCursor` until `hasMore` is `false`.
 
 ### Arguments
 
