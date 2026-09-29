@@ -655,8 +655,8 @@ export function registerRecipeTools(server: McpServer) {
       'case-insensitive — no fuzzy matching or substitution) and persists them, PATCHing only the recipe\'s tools ' +
       'field. mode "merge" (default) keeps existing assignments; mode "replace" sets the complete collection, and ' +
       'DESTRUCTIVELY clears all assigned tools when tools is an empty array. Unknown tools fail the call before any ' +
-      'recipe write unless createMissing is true, which creates them; if the recipe write then fails, the newly ' +
-      'created Tool organizers remain.',
+      'recipe write unless createMissing is true, which creates them; if a later creation or the recipe write ' +
+      'then fails, any Tool organizers already created remain (no rollback).',
     {
       slug: z.string().describe('Slug of the recipe to update.'),
       tools: z

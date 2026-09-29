@@ -36,7 +36,8 @@ export class MissingToolsError extends Error {
 /**
  * Fetches the recipe, resolves the requested Tool organizers (ID, then slug, then name, all exact
  * and case-insensitive — no fuzzy matching), and PATCHes only the recipe's `tools` field. If
- * createMissing creates an organizer and the recipe PATCH then fails, the created organizer remains.
+ * createMissing creates organizers and a later creation or the recipe PATCH then fails, the
+ * already-created organizers remain (no rollback).
  */
 export async function updateRecipeTools(slug: string, input: RecipeToolsInput): Promise<RecipeToolsResult> {
   const mode = input.mode ?? 'merge';

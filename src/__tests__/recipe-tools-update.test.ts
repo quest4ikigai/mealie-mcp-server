@@ -140,6 +140,18 @@ describe('update_recipe_tools', () => {
     expect(schema.tools.safeParse(['Whisk']).success).toBe(true);
   });
 
+  it('leaves earlier created tools in place and skips the PATCH when a later creation fails', async () => {
+    mockCreateTool.mockReset();
+    mockCreateTool
+      .mockResolvedValueOnce({ id: 'new-1', name: 'Wok', slug: 'wok' })
+      .mockRejectedValueOnce(new Error('second boom'));
+    const { response } = await run({ tools: ['Wok', 'Steamer'], createMissing: true });
+    expect(response.isError).toBe(true);
+    expect(response.content[0].text).toMatch(/second boom/);
+    expect(mockCreateTool).toHaveBeenCalledTimes(2);
+    expect(mockPatch).not.toHaveBeenCalled();
+  });
+
   it('propagates recipe-not-found, creation, and PATCH failures', async () => {
     mockGetRecipe.mockRejectedValueOnce(new Error('Recipe not found'));
     expect((await run({ tools: ['Whisk'] })).response.content[0].text).toMatch(/Recipe not found/);
