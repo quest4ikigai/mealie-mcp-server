@@ -111,6 +111,43 @@ Tools are Mealie's equipment organizers (e.g. `Whisk`, `Sheet Pan`). The semanti
 
 The result contains `id`, `slug`, and `tools.final` / `added` / `removed` / `created`, each item with `id`, `name`, `slug`.
 
+### Resolving or creating canonical Tools first
+
+Tool organizers are shared vocabulary, like foods and units. Before assigning or creating one:
+
+- `get_tools` — list/search Tool organizers (`search`, `page`, `perPage`); search is name-based.
+- `get_tool` — retrieve one Tool by ID, including `householdsWithTool` when present.
+- `get_tool_matches` — resolve up to 25 already-decided equipment names in one call, matching Tool **name** then **slug** (exact before substring, plain string comparison only). It returns ranked candidates and never picks a winner; you decide which candidate, if any, is right. It never infers equipment (`beater` will not match `Whisk`).
+- `create_tool` — create a Tool only when `get_tool_matches` shows nothing suitable.
+- `update_tool` — rename a Tool. It reads the existing Tool first and carries forward `householdsWithTool`, because Mealie's PUT is a full replacement. Household "on hand" ownership itself is not managed by this server.
+- `delete_tool` — **Destructive.** Verify with `get_tool` first; Mealie's refusal errors are surfaced as-is.
+
+### Delta form: add / remove
+
+Instead of `tools`/`mode`, pass `add` and/or `remove` to change only specific assignments (`current - remove + add`):
+
+```json
+{ "slug": "soy-garlic-baked-salmon", "add": ["Whisk"], "remove": ["Skillet"], "createMissing": false }
+```
+
+- `tools`/`mode` and `add`/`remove` are mutually exclusive, and one form is required. `mode` applies only to `tools`.
+- `add` and `remove` use the same exact ID → slug → name resolution. `createMissing` may create values from `tools` or `add`; values in `remove` are never created, and an unknown removal fails the call before any write.
+- The same resolved Tool in both `add` and `remove` is rejected.
+- A delta that changes nothing skips the recipe PATCH.
+
+### Batch: update_recipe_tools_batch
+
+```json
+{
+  "updates": [
+    { "slug": "recipe-a", "add": ["Whisk"], "remove": ["Skillet"] },
+    { "slug": "recipe-b", "tools": ["Dutch Oven"], "mode": "replace" }
+  ]
+}
+```
+
+1–25 updates per call, each using either form. Duplicate recipe slugs (or an empty/oversized batch) reject the whole call before any write. Recipes run independently with at most 5 in flight and results come back in input order with per-recipe `success`/`error` plus `requestedCount`/`succeededCount`/`failedCount`. A failure never stops or rolls back sibling recipes, and Tool organizers created for a recipe that later fails remain. Organizer creation is serialized across the batch (with the Tool list re-read each time), so a Tool requested by several recipes is created once rather than duplicated.
+
 ## Resolving or Creating a Food
 
 Foods are Mealie's reusable structured ingredient entities (e.g. "onion", "chicken breast") — the building blocks that a parsed recipe ingredient eventually points to, as distinct from the free-text ingredient notes on a recipe. Search existing foods before creating a new one: the name you need, or a close alias of it, often already exists, and creating a duplicate fragments the taxonomy.
