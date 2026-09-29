@@ -122,6 +122,24 @@ describe('update_recipe_tools', () => {
     expect(names(body!.tools.final)).toEqual(['Skillet', 'Whisk', 'Wok']);
   });
 
+  it('indexes a created tool under its id, slug, and name so aliases do not create twice', async () => {
+    const { body } = await run({ tools: ['Dutch Oven', 'dutch-oven'], createMissing: true });
+    expect(mockCreateTool).toHaveBeenCalledTimes(1);
+    expect(names(body!.tools.created)).toEqual(['Dutch Oven']);
+  });
+
+  it('rejects blank tool values in the input schema', () => {
+    let schema: Record<string, { safeParse: (v: unknown) => { success: boolean } }> = {};
+    registerRecipeTools({
+      tool: (name: string, ...rest: unknown[]) => {
+        if (name === 'update_recipe_tools') schema = rest[rest.length - 2] as typeof schema;
+      },
+    } as unknown as McpServer);
+    expect(schema.tools.safeParse(['  ', '']).success).toBe(false);
+    expect(schema.tools.safeParse([]).success).toBe(true);
+    expect(schema.tools.safeParse(['Whisk']).success).toBe(true);
+  });
+
   it('propagates recipe-not-found, creation, and PATCH failures', async () => {
     mockGetRecipe.mockRejectedValueOnce(new Error('Recipe not found'));
     expect((await run({ tools: ['Whisk'] })).response.content[0].text).toMatch(/Recipe not found/);

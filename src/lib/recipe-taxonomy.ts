@@ -126,6 +126,9 @@ export async function resolveTaxonomyValues(
     const createdRaw = await createFn(value);
     const item = toTaxonomyItem(createdRaw);
     createdThisCall.set(key, item);
+    createdThisCall.set(item.id.toLowerCase(), item);
+    createdThisCall.set(item.slug.toLowerCase(), item);
+    createdThisCall.set(item.name.toLowerCase(), item);
     resolvedMap.set(item.id, item);
     created.push(item);
   }

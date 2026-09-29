@@ -660,7 +660,7 @@ export function registerRecipeTools(server: McpServer) {
     {
       slug: z.string().describe('Slug of the recipe to update.'),
       tools: z
-        .array(z.string())
+        .array(z.string().trim().min(1, 'Tool values must not be blank.'))
         .describe(
           'Tools to assign, each a name, slug, or ID of a Mealie Tool organizer. An empty array is a no-op in ' +
             'merge mode, but with mode "replace" it DESTRUCTIVELY clears all tools from the recipe.',
