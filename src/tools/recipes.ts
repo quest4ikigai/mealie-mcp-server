@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import * as recipesApi from '../api/recipes.js';
 import { buildTaxonomyPatch, updateRecipeTaxonomy, updateRecipeTaxonomyBatch } from '../lib/recipe-taxonomy.js';
+import { updateRecipeTools } from '../lib/recipe-tools.js';
 import { resolveTaxonomyFilter } from '../lib/taxonomy-resolution.js';
 import { findRecipesForIngredients } from '../lib/find-recipes-for-ingredients.js';
 import {
@@ -639,6 +640,48 @@ export function registerRecipeTools(server: McpServer) {
     async ({ updates }) => {
       try {
         const result = await updateRecipeTaxonomyBatch(updates);
+        return successResponse(result);
+      } catch (error) {
+        return errorResponse(error);
+      }
+    },
+  );
+
+  // @endpoints GET /api/recipes/{slug}, GET /api/organizers/tools, POST /api/organizers/tools, PATCH /api/recipes/{slug}
+  server.tool(
+    'update_recipe_tools',
+    'Assigns Mealie Tool organizers (equipment, e.g. "Whisk", "Sheet Pan") to one existing recipe. You decide which ' +
+      'tools the recipe needs; this tool only resolves them deterministically (exact ID, then slug, then name, ' +
+      'case-insensitive — no fuzzy matching or substitution) and persists them, PATCHing only the recipe\'s tools ' +
+      'field. mode "merge" (default) keeps existing assignments; mode "replace" sets the complete collection, and ' +
+      'DESTRUCTIVELY clears all assigned tools when tools is an empty array. Unknown tools fail the call before any ' +
+      'recipe write unless createMissing is true, which creates them; if a later creation or the recipe write ' +
+      'then fails, any Tool organizers already created remain (no rollback).',
+    {
+      slug: z.string().describe('Slug of the recipe to update.'),
+      tools: z
+        .array(z.string().trim().min(1, 'Tool values must not be blank.'))
+        .describe(
+          'Tools to assign, each a name, slug, or ID of a Mealie Tool organizer. An empty array is a no-op in ' +
+            'merge mode, but with mode "replace" it DESTRUCTIVELY clears all tools from the recipe.',
+        ),
+      mode: z
+        .enum(['merge', 'replace'])
+        .optional()
+        .describe(
+          'merge (default) adds to existing tools; replace sets exactly the given list and removes all others.',
+        ),
+      createMissing: z
+        .boolean()
+        .optional()
+        .describe(
+          'When true, tools that do not exist are created using the requested value as the name. Default false: ' +
+            'unknown values fail the call and are all listed.',
+        ),
+    },
+    async ({ slug, tools, mode, createMissing }) => {
+      try {
+        const result = await updateRecipeTools(slug, { tools, mode, createMissing });
         return successResponse(result);
       } catch (error) {
         return errorResponse(error);

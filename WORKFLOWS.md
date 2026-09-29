@@ -91,6 +91,26 @@ Every value in `categories`/`tags` may be a name, a slug, or an ID — matching 
 
 Both tools return the recipe's `id`/`slug` plus, per collection, the `final` list after the update and which items were `added`, `removed`, or `created` — useful for confirming exactly what changed.
 
+## Assigning Recipe Tools
+
+Tools are Mealie's equipment organizers (e.g. `Whisk`, `Sheet Pan`). The semantic boundary is explicit: **you** (the calling AI) decide that a recipe needs a tool — this server never infers equipment from recipe text. `update_recipe_tools` then deterministically resolves each value to a canonical Mealie Tool (exact ID, then slug, then name, all case-insensitive; no fuzzy matching, so `Sheet Pan` is never silently treated as `Baking Sheet`) — optionally creating it — and persists it, PATCHing only the recipe's `tools` field.
+
+```json
+{
+  "slug": "soy-garlic-baked-salmon",
+  "tools": ["Sheet Pan", "Whisk"],
+  "mode": "merge",
+  "createMissing": false
+}
+```
+
+- `mode: "merge"` (default) keeps existing assignments and adds the requested ones; an empty `tools` array is a no-op.
+- `mode: "replace"` sets the complete collection and reports dropped tools under `removed`. **An empty `tools` array with `replace` clears all tools from the recipe.**
+- Unknown values fail the call (listing all of them) before any recipe write, unless `createMissing: true`, which creates them. If a created Tool is followed by a failed recipe PATCH, the new Tool organizer remains; there is no cleanup.
+- Duplicate values resolving to the same Tool collapse to one assignment.
+
+The result contains `id`, `slug`, and `tools.final` / `added` / `removed` / `created`, each item with `id`, `name`, `slug`.
+
 ## Resolving or Creating a Food
 
 Foods are Mealie's reusable structured ingredient entities (e.g. "onion", "chicken breast") — the building blocks that a parsed recipe ingredient eventually points to, as distinct from the free-text ingredient notes on a recipe. Search existing foods before creating a new one: the name you need, or a close alias of it, often already exists, and creating a duplicate fragments the taxonomy.

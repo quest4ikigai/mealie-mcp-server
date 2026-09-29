@@ -2,16 +2,16 @@
 
 | Category | Tools |
 |---|---|
-| Recipes | 18 |
+| Recipes | 19 |
 | Meal Plans | 6 |
 | Categories | 7 |
 | Tags | 7 |
 | Shopping Lists | 13 |
 | Foods | 6 |
 | Units | 6 |
-| **Total** | **63** |
+| **Total** | **64** |
 
-## Recipes Operations (18)
+## Recipes Operations (19)
 
 - `create_recipe` — POST /api/recipes, PUT /api/recipes/{slug}
   Creates a new recipe. Optionally sets ingredients and instructions on creation.
@@ -74,6 +74,9 @@
 
 - `update_recipe_taxonomy_batch` — GET /api/organizers/categories, POST /api/organizers/categories, GET /api/organizers/tags, POST /api/organizers/tags, GET /api/recipes/{slug}, PATCH /api/recipes/{slug}
   Runs update_recipe_taxonomy for multiple recipes with bounded concurrency (5 at a time), returning a 
+
+- `update_recipe_tools` — GET /api/recipes/{slug}, GET /api/organizers/tools, POST /api/organizers/tools, PATCH /api/recipes/{slug}
+  Assigns Mealie Tool organizers (equipment, e.g. "Whisk", "Sheet Pan") to one existing recipe. You decide which 
 
 ## Meal Plans Operations (6)
 
