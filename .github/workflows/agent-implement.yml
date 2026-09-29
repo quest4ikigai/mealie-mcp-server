@@ -257,7 +257,7 @@ jobs:
               exit 0
             fi
 
-            CLEAN="$(
+            CLEAN_REACTION="$(
               gh api --paginate \
                 -H "Accept: application/vnd.github+json" \
                 "repos/$REPO/issues/comments/$REQUEST_COMMENT_ID/reactions" \
@@ -265,7 +265,14 @@ jobs:
                 | head -n 1
             )"
 
-            if [ -n "$CLEAN" ]; then
+            CLEAN_COMMENT="$(
+              gh api --paginate "repos/$REPO/issues/$PR_NUMBER/comments" \
+                | jq -r --argjson request "$REQUEST_COMMENT_ID" \
+                  '.[] | select(.id > $request) | select(.user.login | startswith("chatgpt-codex-connector")) | select(.body | contains("Didn\\u0027t find any major issues")) | .id' \
+                | head -n 1
+            )"
+
+            if [ -n "$CLEAN_REACTION" ] || [ -n "$CLEAN_COMMENT" ]; then
               echo "result=clean" >> "$GITHUB_OUTPUT"
               exit 0
             fi
