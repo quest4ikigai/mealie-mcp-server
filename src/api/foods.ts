@@ -1,4 +1,4 @@
-import { apiGet, apiPost, apiPut, apiDelete, formatParams, MealieApiError, PaginatedResult } from './client.js';
+import { apiGet, apiPost, apiPut, apiDelete, formatParams, MealieApiError, PaginatedResult, encodePathSegment } from './client.js';
 import {
   lookupCandidates,
   LookupValidationError,
@@ -72,7 +72,7 @@ export async function getFood(foodId: string): Promise<Record<string, unknown>> 
   }
 
   try {
-    return await apiGet<Record<string, unknown>>(`/api/foods/${id}`);
+    return await apiGet<Record<string, unknown>>(`/api/foods/${encodePathSegment(id, 'id')}`);
   } catch (error) {
     if (error instanceof MealieApiError && error.status === 404) {
       wrapError(`Food not found: ${id}`, error);
@@ -120,7 +120,7 @@ export async function updateFood(
   }
 
   try {
-    const existing = await apiGet<Record<string, unknown>>(`/api/foods/${id}`);
+    const existing = await apiGet<Record<string, unknown>>(`/api/foods/${encodePathSegment(id, 'id')}`);
 
     // Mealie's PUT is a full replace of the CreateIngredientFood shape, so fields the
     // caller didn't ask to change must be carried forward from the existing record.
@@ -135,7 +135,7 @@ export async function updateFood(
     if (input.aliases !== undefined) payload.aliases = toAliasPayload(input.aliases);
     if (input.labelId !== undefined) payload.labelId = input.labelId;
 
-    return await apiPut<Record<string, unknown>>(`/api/foods/${id}`, payload);
+    return await apiPut<Record<string, unknown>>(`/api/foods/${encodePathSegment(id, 'id')}`, payload);
   } catch (error) {
     if (error instanceof MealieApiError && error.status === 404) {
       wrapError(`Food not found: ${id}`, error);
@@ -184,7 +184,7 @@ export async function deleteFood(foodId: string): Promise<Record<string, unknown
   }
 
   try {
-    return await apiDelete<Record<string, unknown>>(`/api/foods/${id}`);
+    return await apiDelete<Record<string, unknown>>(`/api/foods/${encodePathSegment(id, 'id')}`);
   } catch (error) {
     if (error instanceof MealieApiError && error.status === 404) {
       wrapError(`Food not found: ${id}`, error);

@@ -1,4 +1,4 @@
-import { apiGet, apiPost, apiPut, apiDelete, formatParams, PaginatedResult } from '../api/client.js';
+import { apiGet, apiPost, apiPut, apiDelete, formatParams, PaginatedResult, encodePathSegment } from '../api/client.js';
 
 export function getTags(params?: { page?: number; perPage?: number; search?: string }): Promise<PaginatedResult<Record<string, unknown>>> {
   return apiGet<PaginatedResult<Record<string, unknown>>>('/api/organizers/tags', params ? formatParams(params) : undefined);
@@ -13,17 +13,17 @@ export function createTag(name: string): Promise<Record<string, unknown>> {
 }
 
 export function getTag(id: string): Promise<Record<string, unknown>> {
-  return apiGet<Record<string, unknown>>(`/api/organizers/tags/${id}`);
+  return apiGet<Record<string, unknown>>(`/api/organizers/tags/${encodePathSegment(id, 'id')}`);
 }
 
 export function getTagBySlug(slug: string): Promise<Record<string, unknown>> {
-  return apiGet<Record<string, unknown>>(`/api/organizers/tags/slug/${slug}`);
+  return apiGet<Record<string, unknown>>(`/api/organizers/tags/slug/${encodePathSegment(slug, 'slug')}`);
 }
 
 export function updateTag(id: string, data: Record<string, unknown>): Promise<Record<string, unknown>> {
-  return apiPut<Record<string, unknown>>(`/api/organizers/tags/${id}`, data);
+  return apiPut<Record<string, unknown>>(`/api/organizers/tags/${encodePathSegment(id, 'id')}`, data);
 }
 
 export function deleteTag(id: string): Promise<Record<string, unknown>> {
-  return apiDelete<Record<string, unknown>>(`/api/organizers/tags/${id}`);
+  return apiDelete<Record<string, unknown>>(`/api/organizers/tags/${encodePathSegment(id, 'id')}`);
 }

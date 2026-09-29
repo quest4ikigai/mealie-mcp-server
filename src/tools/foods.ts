@@ -62,7 +62,7 @@ export function registerFoodTools(server: McpServer): void {
   server.tool(
     'get_food',
     'Retrieves a single food by ID, including its aliases and label information when present.',
-    { foodId: z.string().describe('UUID of the food to retrieve.') },
+    { foodId: z.string().uuid().describe('UUID of the food to retrieve.') },
     async ({ foodId }) => {
       try {
         const result = await foodsApi.getFood(foodId);
@@ -146,7 +146,7 @@ export function registerFoodTools(server: McpServer): void {
     'Updates an existing food. Fields left unspecified keep their current value. Sufficient for adding an alias: ' +
       'get_food the current record, append to its existing aliases, and pass the complete list back here.',
     {
-      foodId: z.string().describe('UUID of the food to update.'),
+      foodId: z.string().uuid().describe('UUID of the food to update.'),
       name: z.string().optional(),
       pluralName: z.string().optional(),
       description: z.string().optional(),
@@ -182,7 +182,7 @@ export function registerFoodTools(server: McpServer): void {
     'DESTRUCTIVE and irreversible: permanently deletes a food. Use get_food first to verify this is the exact ' +
       'food intended. Deleting a food may affect recipes and shopping list items that reference it — Mealie may ' +
       'refuse the deletion in that case, leaving the food intact.',
-    { foodId: z.string().describe('UUID of the food to delete.') },
+    { foodId: z.string().uuid().describe('UUID of the food to delete.') },
     async ({ foodId }) => {
       try {
         const result = await foodsApi.deleteFood(foodId);
