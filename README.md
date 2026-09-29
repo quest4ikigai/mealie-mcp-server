@@ -154,10 +154,10 @@ yarn lint
 ```
 
 <!-- BEGIN GENERATED TOOLS -->
-## Available Tools (63 total)
+## Available Tools (64 total)
 
-### Recipes (18)
-`create_recipe`, `delete_recipe`, `duplicate_recipe`, `find_recipes_for_ingredients`, `get_recipe_concise`, `get_recipe_detailed`, `get_recipes`, `get_recipes_batch`, `get_recipes_detailed_batch`, `get_recipes_for_classification`, `get_recipes_for_ingredient_parsing`, `mark_recipe_last_made`, `patch_recipe`, `set_recipe_image_from_url`, `update_recipe_ingredients`, `update_recipe_ingredients_batch`, `update_recipe_taxonomy`, `update_recipe_taxonomy_batch`
+### Recipes (19)
+`create_recipe`, `delete_recipe`, `duplicate_recipe`, `find_recipes_for_ingredients`, `get_recipe_concise`, `get_recipe_detailed`, `get_recipes`, `get_recipes_batch`, `get_recipes_detailed_batch`, `get_recipes_for_classification`, `get_recipes_for_ingredient_parsing`, `mark_recipe_last_made`, `patch_recipe`, `set_recipe_image_from_url`, `update_recipe_ingredients`, `update_recipe_ingredients_batch`, `update_recipe_taxonomy`, `update_recipe_taxonomy_batch`, `update_recipe_tools`
 
 ### Meal Plans (6)
 `create_mealplan`, `create_mealplan_bulk`, `get_all_mealplans`, `get_mealplan_with_recipes`, `get_todays_mealplan`, `patch_mealplan`

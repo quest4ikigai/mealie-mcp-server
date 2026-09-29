@@ -55,7 +55,7 @@ export class MissingTaxonomyItemsError extends Error {
   }
 }
 
-function toTaxonomyItem(raw: Record<string, unknown>): TaxonomyItem {
+export function toTaxonomyItem(raw: Record<string, unknown>): TaxonomyItem {
   return {
     id: String(raw.id),
     name: String(raw.name),
@@ -63,12 +63,12 @@ function toTaxonomyItem(raw: Record<string, unknown>): TaxonomyItem {
   };
 }
 
-function toTaxonomyItems(raw: unknown): TaxonomyItem[] {
+export function toTaxonomyItems(raw: unknown): TaxonomyItem[] {
   if (!Array.isArray(raw)) return [];
   return raw.map((item) => toTaxonomyItem(item as Record<string, unknown>));
 }
 
-function toApiPayloadItem(item: TaxonomyItem): Record<string, unknown> {
+export function toApiPayloadItem(item: TaxonomyItem): Record<string, unknown> {
   return { id: item.id, name: item.name, slug: item.slug };
 }
 
@@ -82,13 +82,13 @@ async function getAllTags(): Promise<TaxonomyItem[]> {
   return result.items.map(toTaxonomyItem);
 }
 
-interface ResolveResult {
+export interface ResolveResult {
   resolved: TaxonomyItem[];
   created: TaxonomyItem[];
   missing: string[];
 }
 
-async function resolveTaxonomyValues(
+export async function resolveTaxonomyValues(
   values: string[],
   existing: TaxonomyItem[],
   createMissing: boolean,
@@ -133,7 +133,7 @@ async function resolveTaxonomyValues(
   return { resolved: [...resolvedMap.values()], created, missing };
 }
 
-function computeFinal(
+export function computeFinal(
   mode: TaxonomyMode,
   current: TaxonomyItem[],
   requested: TaxonomyItem[],
