@@ -1,0 +1,288 @@
+name: Agent - Human Feedback
+
+# Owner-only explicit feedback path for open Claude-created PRs.
+#
+# To request a fix, the repository owner comments on the PR with a body whose
+# first characters are:
+#
+#   /agent-fix
+#
+# Ordinary discussion comments never invoke Claude. After a successful fix,
+# Codex is always requested for an independent review before human acceptance.
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+  actions: read
+  id-token: write
+
+# Share the same concurrency namespace as Codex remediation so an explicit
+# human-fix request and an automated Codex remediation cannot edit one PR branch
+# at the same time.
+concurrency:
+  group: agent-remediate-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  fix:
+    if: >-
+      github.event.issue.pull_request != null &&
+      github.event.comment.user.login == github.repository_owner &&
+      startsWith(github.event.comment.body, '/agent-fix')
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+
+    steps:
+      - name: Inspect pull request
+        id: pr
+        env:
+          GH_TOKEN: ${{ secrets.AGENT_GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+          REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          PR_JSON="$(gh api "repos/$REPO/pulls/$PR_NUMBER")"
+          STATE="$(jq -r '.state' <<<"$PR_JSON")"
+          HEAD_REPO="$(jq -r '.head.repo.full_name // ""' <<<"$PR_JSON")"
+          HEAD_REF="$(jq -r '.head.ref // ""' <<<"$PR_JSON")"
+
+          ELIGIBLE=false
+          if [ "$STATE" = "open" ] &&
+             [ "$HEAD_REPO" = "$REPO" ] &&
+             [[ "$HEAD_REF" == claude/* ]]; then
+            ELIGIBLE=true
+          fi
+
+          {
+            echo "eligible=$ELIGIBLE"
+            echo "head_ref=$HEAD_REF"
+          } >> "$GITHUB_OUTPUT"
+
+          if [ "$ELIGIBLE" != "true" ]; then
+            gh pr comment "$PR_NUMBER" --body               "/agent-fix was not run. Human-fix automation only operates on open, same-repository PRs whose head branch starts with `claude/`."
+          fi
+
+      - name: Verify agent configuration
+        if: steps.pr.outputs.eligible == 'true'
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          AGENT_GITHUB_TOKEN: ${{ secrets.AGENT_GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "$CLAUDE_CODE_OAUTH_TOKEN" ]; then
+            echo "::error::Missing repository secret CLAUDE_CODE_OAUTH_TOKEN"
+            exit 1
+          fi
+          if [ -z "$AGENT_GITHUB_TOKEN" ]; then
+            echo "::error::Missing repository secret AGENT_GITHUB_TOKEN"
+            exit 1
+          fi
+
+      - name: Checkout pull request branch
+        if: steps.pr.outputs.eligible == 'true'
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ steps.pr.outputs.head_ref }}
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        if: steps.pr.outputs.eligible == 'true'
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        if: steps.pr.outputs.eligible == 'true'
+        shell: bash
+        run: |
+          corepack enable
+          yarn install --immutable
+
+      - name: Apply explicit human feedback
+        id: claude
+        if: steps.pr.outputs.eligible == 'true'
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          trigger_phrase: "/agent-fix"
+          additional_permissions: |
+            actions: read
+          prompt: |
+            You are the human-feedback remediation agent for PR #${{ github.event.issue.number }}.
+
+            The repository owner deliberately invoked /agent-fix with this exact feedback:
+
+            HUMAN FEEDBACK:
+            ${{ github.event.comment.body }}
+
+            Read:
+            - the full pull request diff and current branch,
+            - the originating issue/design contract,
+            - all existing PR review comments and unresolved review threads,
+            - CLAUDE.md,
+            - AGENTS.md,
+            - CONTRIBUTING.md,
+            - ARCHITECTURE.md,
+            - and relevant workflow documentation.
+
+            Treat the owner's /agent-fix comment as accepted feedback to address, but not
+            as permission to broaden the original feature.
+
+            Rules:
+            - Address only the requested feedback and any directly necessary regression
+              tests/documentation.
+            - Do not redesign the feature or perform opportunistic refactors.
+            - Preserve public behavior unless the feedback or approved design requires a
+              change.
+            - If the feedback conflicts with the approved design or cannot be safely
+              resolved without a product decision, stop and return blocked.
+            - Run the complete validation suite:
+              corepack enable
+              yarn install --immutable
+              yarn typecheck
+              yarn lint
+              yarn gen:docs:check
+              yarn test
+              yarn build
+            - If generated documentation is stale, run yarn gen:docs and repeat the
+              relevant checks.
+            - Commit and push fixes only to the existing pull request branch.
+            - Never merge the pull request or push directly to main or agent-main.
+          claude_args: |
+            --model sonnet
+            --max-turns 30
+            --allowedTools Edit,Read,Write,Bash
+            --json-schema '{"type":"object","properties":{"status":{"type":"string","enum":["fixed","blocked","no_change"]},"summary":{"type":"string"},"validation":{"type":"string"}},"required":["status","summary","validation"]}'
+
+      - name: Parse Claude result
+        id: claude_result
+        if: always() && steps.pr.outputs.eligible == 'true'
+        env:
+          RAW_RESULT: ${{ steps.claude.outputs.structured_output }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "$RAW_RESULT" ]; then
+            echo "status=" >> "$GITHUB_OUTPUT"
+            echo "summary=" >> "$GITHUB_OUTPUT"
+            echo "validation=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          STATUS="$(jq -r '.status // ""' <<<"$RAW_RESULT")"
+          SUMMARY="$(jq -r '.summary // ""' <<<"$RAW_RESULT")"
+          VALIDATION="$(jq -r '.validation // ""' <<<"$RAW_RESULT")"
+
+          {
+            echo "status=$STATUS"
+            echo "summary<<EOF"
+            echo "$SUMMARY"
+            echo "EOF"
+            echo "validation<<EOF"
+            echo "$VALIDATION"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Report blocked or no-change feedback
+        if: >-
+          steps.pr.outputs.eligible == 'true' &&
+          steps.claude.outputs.conclusion == 'success' &&
+          (steps.claude_result.outputs.status == 'blocked' ||
+           steps.claude_result.outputs.status == 'no_change')
+        env:
+          GH_TOKEN: ${{ secrets.AGENT_GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+          STATUS: ${{ steps.claude_result.outputs.status }}
+          SUMMARY: ${{ steps.claude_result.outputs.summary }}
+          VALIDATION: ${{ steps.claude_result.outputs.validation }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh pr comment "$PR_NUMBER" --body             "Human-feedback remediation finished with status `$STATUS`.
+
+          **Summary:** $SUMMARY
+
+          **Validation:** $VALIDATION"
+
+      - name: Request Codex review and wait for result
+        id: codex
+        if: >-
+          steps.pr.outputs.eligible == 'true' &&
+          steps.claude.outputs.conclusion == 'success' &&
+          steps.claude_result.outputs.status == 'fixed'
+        env:
+          GH_TOKEN: ${{ secrets.AGENT_GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+          REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          count_codex_reviews() {
+            gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/reviews"               --jq '.[] | select(.user.login | startswith("chatgpt-codex-connector")) | .id'               | wc -l               | tr -d ' '
+          }
+
+          BASELINE="$(count_codex_reviews)"
+          REQUEST_COMMENT_ID="$(
+            gh api               -X POST               "repos/$REPO/issues/$PR_NUMBER/comments"               -f body='@codex review'               --jq '.id'
+          )"
+
+          DEADLINE=$((SECONDS + 900))
+          while [ "$SECONDS" -lt "$DEADLINE" ]; do
+            CURRENT="$(count_codex_reviews)"
+            if [ "$CURRENT" -gt "$BASELINE" ]; then
+              echo "result=findings" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+
+            CLEAN_REACTION="$(
+              gh api --paginate                 -H "Accept: application/vnd.github+json"                 "repos/$REPO/issues/comments/$REQUEST_COMMENT_ID/reactions"                 --jq '.[] | select((.user.login | startswith("chatgpt-codex-connector")) and .content == "+1") | .id'                 | head -n 1
+            )"
+
+            CLEAN_COMMENT="$(
+              gh api --paginate "repos/$REPO/issues/$PR_NUMBER/comments"                 | jq -r --argjson request "$REQUEST_COMMENT_ID"                   '.[] | select(.id > $request) | select(.user.login | startswith("chatgpt-codex-connector")) | select(.body | contains("find any major issues")) | .id'                 | head -n 1
+            )"
+
+            if [ -n "$CLEAN_REACTION" ] || [ -n "$CLEAN_COMMENT" ]; then
+              echo "result=clean" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+
+            sleep 15
+          done
+
+          echo "result=pending" >> "$GITHUB_OUTPUT"
+
+      - name: Report clean review
+        if: steps.codex.outputs.result == 'clean'
+        env:
+          GH_TOKEN: ${{ secrets.AGENT_GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+          SUMMARY: ${{ steps.claude_result.outputs.summary }}
+          VALIDATION: ${{ steps.claude_result.outputs.validation }}
+        shell: bash
+        run: |
+          gh pr comment "$PR_NUMBER" --body             "Owner-requested /agent-fix remediation completed and Codex returned no actionable findings.
+
+          **Claude summary:** $SUMMARY
+
+          **Validation:** $VALIDATION
+
+          CI still needs to pass before human acceptance."
+
+      - name: Report pending review
+        if: steps.codex.outputs.result == 'pending'
+        env:
+          GH_TOKEN: ${{ secrets.AGENT_GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+        shell: bash
+        run: |
+          gh pr comment "$PR_NUMBER" --body             "Owner-requested /agent-fix remediation completed. Codex review was requested but did not finish within the 15-minute monitoring window. Later Codex findings will still trigger the normal remediation workflow."
