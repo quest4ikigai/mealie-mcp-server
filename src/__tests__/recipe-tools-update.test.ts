@@ -95,6 +95,13 @@ describe('update_recipe_tools', () => {
     expect(mockPatch.mock.calls[0][1]).toEqual({ tools: [] });
   });
 
+  it('replace with the current set (in any order) is a no-op with no PATCH', async () => {
+    const { body } = await run({ tools: ['whisk', 'skillet'], mode: 'replace' });
+    expect(body!.tools.added).toEqual([]);
+    expect(body!.tools.removed).toEqual([]);
+    expect(mockPatch).not.toHaveBeenCalled();
+  });
+
   it('empty merge is a no-op with no PATCH', async () => {
     const { body } = await run({ tools: [] });
     expect(names(body!.tools.final)).toEqual(['Skillet', 'Whisk']);

@@ -108,7 +108,8 @@ export async function updateRecipeTools(
       );
       if (missing.length > 0) throw new MissingToolsError(missing);
       const { final, added, removed } = computeFinal(mutation.mode, current, resolved);
-      return { final, added, removed, created, skipPatch: mutation.mode === 'merge' && added.length === 0 };
+      // Replace with the recipe's current set (in any order) is also a no-op, not just an empty merge.
+      return { final, added, removed, created, skipPatch: added.length === 0 && removed.length === 0 };
     }
 
     // Removals never create, and all validation happens before any organizer is created.

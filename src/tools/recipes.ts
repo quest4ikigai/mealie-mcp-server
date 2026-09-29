@@ -722,7 +722,9 @@ export function registerRecipeTools(server: McpServer) {
       'requested/succeeded/failed counts, and a failure on one recipe never stops or rolls back the others (no ' +
       'cross-recipe transaction; Tool organizers created for a recipe that later fails remain). Organizer ' +
       'creation via createMissing is serialized across the batch so a Tool requested by several recipes is ' +
-      `created once. The whole call is rejected before any write for an empty batch, more than ${RECIPE_TOOLS_BATCH_MAX_SIZE} ` +
+      'created once. createMissing still applies per entry: an entry without it may fail as missing even if ' +
+      'another entry in the same call creates that Tool, so set createMissing on every entry that names a new ' +
+      `Tool. The whole call is rejected before any write for an empty batch, more than ${RECIPE_TOOLS_BATCH_MAX_SIZE} ` +
       'updates, a missing slug, or the same recipe slug repeated.',
     {
       updates: z
