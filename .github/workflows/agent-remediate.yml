@@ -1,0 +1,256 @@
+name: Agent - Remediate Codex Review
+
+# Triggered only by reviews submitted by the Codex GitHub integration on
+# Claude-created PR branches. Up to three remediation passes are allowed.
+
+on:
+  pull_request_review:
+    types: [submitted]
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+  actions: read
+
+concurrency:
+  group: agent-remediate-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  remediate:
+    if: >-
+      github.event.pull_request.state == 'open' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      startsWith(github.event.pull_request.head.ref, 'claude/') &&
+      startsWith(github.event.review.user.login, 'chatgpt-codex-connector')
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    env:
+      MAX_REMEDIATION_PASSES: 3
+
+    steps:
+      - name: Verify agent configuration
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          AGENT_GITHUB_TOKEN: ${{ secrets.AGENT_GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "$CLAUDE_CODE_OAUTH_TOKEN" ]; then
+            echo "::error::Missing repository secret CLAUDE_CODE_OAUTH_TOKEN"
+            exit 1
+          fi
+          if [ -z "$AGENT_GITHUB_TOKEN" ]; then
+            echo "::error::Missing repository secret AGENT_GITHUB_TOKEN"
+            exit 1
+          fi
+
+      - name: Count Codex review passes
+        id: passes
+        env:
+          GH_TOKEN: ${{ secrets.AGENT_GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          COUNT="$(
+            gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/reviews" \
+              --jq '.[] | select(.user.login | startswith("chatgpt-codex-connector")) | .id' \
+              | wc -l \
+              | tr -d ' '
+          )"
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+          echo "Codex review pass: $COUNT"
+
+      - name: Stop after remediation limit
+        if: fromJSON(steps.passes.outputs.count) > 3
+        env:
+          GH_TOKEN: ${{ secrets.AGENT_GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh pr comment "$PR_NUMBER" --body \
+            "Agent review/fix loop reached the configured limit of $MAX_REMEDIATION_PASSES remediation passes. Human review is required before continuing."
+
+      - name: Checkout pull request branch
+        if: fromJSON(steps.passes.outputs.count) <= 3
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        if: fromJSON(steps.passes.outputs.count) <= 3
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        if: fromJSON(steps.passes.outputs.count) <= 3
+        shell: bash
+        run: |
+          corepack enable
+          yarn install --immutable
+
+      - name: Remediate Codex findings
+        if: fromJSON(steps.passes.outputs.count) <= 3
+        id: claude
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          allowed_bots: "chatgpt-codex-connector,chatgpt-codex-connector[bot]"
+          additional_permissions: |
+            actions: read
+          prompt: |
+            You are the remediation agent for PR #${{ github.event.pull_request.number }}.
+
+            Codex has just submitted an independent review. Read:
+            - the latest Codex review,
+            - all Codex inline review comments and unresolved review threads,
+            - the pull request diff,
+            - the originating issue/design contract,
+            - CLAUDE.md,
+            - AGENTS.md,
+            - CONTRIBUTING.md,
+            - and relevant architecture/workflow documentation.
+
+            Latest review body:
+            ${{ github.event.review.body }}
+
+            Address only actionable findings relevant to correctness, regression risk,
+            tests, documentation, security, compatibility, or the approved design.
+
+            Rules:
+            - Do not redesign the feature.
+            - If findings are valid, fix them with the smallest complete patch.
+            - If a finding conflicts with the design contract or cannot be safely
+              resolved without a product decision, stop and return blocked.
+            - Do not make opportunistic refactors or style-only changes.
+            - Preserve public behavior unless the approved design explicitly changes it.
+            - Run the complete validation suite:
+              corepack enable
+              yarn install --immutable
+              yarn typecheck
+              yarn lint
+              yarn gen:docs:check
+              yarn test
+              yarn build
+            - If generated documentation is stale after your changes, run yarn gen:docs
+              and repeat the relevant checks.
+            - Commit and push fixes only to the existing pull request branch.
+            - Never merge the pull request or push directly to main or agent-main.
+          claude_args: |
+            --model sonnet
+            --max-turns 30
+            --allowedTools Edit,Read,Write,Bash
+            --json-schema '{"type":"object","properties":{"status":{"type":"string","enum":["fixed","blocked"]},"summary":{"type":"string"},"validation":{"type":"string"}},"required":["status","summary","validation"]}'
+
+      - name: Report blocked remediation
+        if: >-
+          fromJSON(steps.passes.outputs.count) <= 3 &&
+          steps.claude.outputs.conclusion == 'success' &&
+          steps.claude.outputs.structured_output != '' &&
+          fromJSON(steps.claude.outputs.structured_output).status == 'blocked'
+        env:
+          GH_TOKEN: ${{ secrets.AGENT_GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          SUMMARY: ${{ fromJSON(steps.claude.outputs.structured_output).summary }}
+          VALIDATION: ${{ fromJSON(steps.claude.outputs.structured_output).validation }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh pr comment "$PR_NUMBER" --body \
+            "Claude could not safely resolve the latest Codex review without human input.
+
+          **Reason:** $SUMMARY
+
+          **Validation:** $VALIDATION"
+
+      - name: Request Codex re-review and wait for result
+        id: codex
+        if: >-
+          fromJSON(steps.passes.outputs.count) <= 3 &&
+          steps.claude.outputs.conclusion == 'success' &&
+          steps.claude.outputs.structured_output != '' &&
+          fromJSON(steps.claude.outputs.structured_output).status == 'fixed'
+        env:
+          GH_TOKEN: ${{ secrets.AGENT_GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          count_codex_reviews() {
+            gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/reviews" \
+              --jq '.[] | select(.user.login | startswith("chatgpt-codex-connector")) | .id' \
+              | wc -l \
+              | tr -d ' '
+          }
+
+          BASELINE="$(count_codex_reviews)"
+          REQUEST_COMMENT_ID="$(
+            gh api \
+              -X POST \
+              "repos/$REPO/issues/$PR_NUMBER/comments" \
+              -f body='@codex review' \
+              --jq '.id'
+          )"
+
+          DEADLINE=$((SECONDS + 900))
+          while [ "$SECONDS" -lt "$DEADLINE" ]; do
+            CURRENT="$(count_codex_reviews)"
+            if [ "$CURRENT" -gt "$BASELINE" ]; then
+              echo "result=findings" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+
+            CLEAN="$(
+              gh api --paginate \
+                -H "Accept: application/vnd.github+json" \
+                "repos/$REPO/issues/comments/$REQUEST_COMMENT_ID/reactions" \
+                --jq '.[] | select((.user.login | startswith("chatgpt-codex-connector")) and .content == "+1") | .id' \
+                | head -n 1
+            )"
+
+            if [ -n "$CLEAN" ]; then
+              echo "result=clean" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+
+            sleep 15
+          done
+
+          echo "result=pending" >> "$GITHUB_OUTPUT"
+
+      - name: Report clean review
+        if: steps.codex.outputs.result == 'clean'
+        env:
+          GH_TOKEN: ${{ secrets.AGENT_GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          SUMMARY: ${{ fromJSON(steps.claude.outputs.structured_output).summary }}
+          VALIDATION: ${{ fromJSON(steps.claude.outputs.structured_output).validation }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh pr comment "$PR_NUMBER" --body \
+            "Claude addressed the prior Codex findings and the follow-up Codex review found no additional actionable issues.
+
+          **Claude summary:** $SUMMARY
+
+          **Validation:** $VALIDATION
+
+          CI still needs to pass, then this is ready for human testing."
+
+      - name: Report pending re-review
+        if: steps.codex.outputs.result == 'pending'
+        env:
+          GH_TOKEN: ${{ secrets.AGENT_GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        shell: bash
+        run: |
+          gh pr comment "$PR_NUMBER" --body \
+            "Claude pushed remediation changes and requested another Codex review, but it did not finish within the 15-minute monitoring window. If Codex later submits findings, another remediation pass will start automatically."

@@ -1,0 +1,279 @@
+name: Agent - Implement
+
+# Required repository secrets:
+#   CLAUDE_CODE_OAUTH_TOKEN - generated with "claude setup-token"
+#   AGENT_GITHUB_TOKEN      - fine-grained PAT scoped only to this repository
+#                             with Contents, Issues, and Pull requests read/write.
+#
+# Codex code review must be enabled for this repository. Reviews are requested
+# explicitly with "@codex review", so Codex auto-review may remain disabled.
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+  actions: read
+
+concurrency:
+  group: agent-implement-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  implement:
+    if: >-
+      github.event.issue.user.login == github.repository_owner &&
+      startsWith(github.event.issue.title, '[agent-build]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+
+    steps:
+      - name: Verify agent configuration
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          AGENT_GITHUB_TOKEN: ${{ secrets.AGENT_GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "$CLAUDE_CODE_OAUTH_TOKEN" ]; then
+            echo "::error::Missing repository secret CLAUDE_CODE_OAUTH_TOKEN"
+            exit 1
+          fi
+          if [ -z "$AGENT_GITHUB_TOKEN" ]; then
+            echo "::error::Missing repository secret AGENT_GITHUB_TOKEN"
+            exit 1
+          fi
+
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          corepack enable
+          yarn install --immutable
+
+      - name: Implement approved design
+        id: claude
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          base_branch: agent-main
+          branch_prefix: claude/
+          branch_name_template: "{{prefix}}issue-{{entityNumber}}-{{description}}"
+          track_progress: true
+          additional_permissions: |
+            actions: read
+          prompt: |
+            Implement the approved design contract in issue #${{ github.event.issue.number }}.
+
+            TITLE:
+            ${{ github.event.issue.title }}
+
+            DESIGN CONTRACT:
+            ${{ github.event.issue.body }}
+
+            Before changing code, read CLAUDE.md, AGENTS.md, CONTRIBUTING.md,
+            ARCHITECTURE.md, and any relevant sections of WORKFLOWS.md.
+
+            Requirements:
+            - Treat the issue as the source of truth. Do not broaden scope.
+            - Preserve existing public behavior unless the issue explicitly changes it.
+            - Follow existing repository patterns before introducing new abstractions.
+            - Add or update tests for changed behavior.
+            - If tool registration changes, keep @endpoints and description metadata
+              accurate and regenerate generated documentation.
+            - Run the complete validation suite:
+              corepack enable
+              yarn install --immutable
+              yarn typecheck
+              yarn lint
+              yarn gen:docs:check
+              yarn test
+              yarn build
+            - If generated documentation is stale, run yarn gen:docs and repeat the
+              relevant validation commands.
+            - Commit and push all required changes to the branch created for this issue.
+            - Never merge, push directly to main or agent-main, or open a pull request
+              against the upstream timo-reymann repository.
+            - If the issue is ambiguous in a way that materially affects behavior,
+              stop rather than inventing a requirement.
+          claude_args: |
+            --model sonnet
+            --max-turns 40
+            --allowedTools Edit,Read,Write,Bash
+            --json-schema '{"type":"object","properties":{"status":{"type":"string","enum":["implemented","blocked","no_change"]},"summary":{"type":"string"},"validation":{"type":"string"}},"required":["status","summary","validation"]}'
+
+      - name: Open pull request
+        id: pr
+        if: >-
+          steps.claude.outputs.conclusion == 'success' &&
+          steps.claude.outputs.branch_name != '' &&
+          steps.claude.outputs.structured_output != '' &&
+          fromJSON(steps.claude.outputs.structured_output).status == 'implemented'
+        env:
+          GH_TOKEN: ${{ secrets.AGENT_GITHUB_TOKEN }}
+          BRANCH: ${{ steps.claude.outputs.branch_name }}
+          BASE: agent-main
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          AGENT_SUMMARY: ${{ fromJSON(steps.claude.outputs.structured_output).summary }}
+          AGENT_VALIDATION: ${{ fromJSON(steps.claude.outputs.structured_output).validation }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          PR_TITLE="$(printf '%s' "$ISSUE_TITLE" | sed 's/^\[agent-build\][[:space:]]*//')"
+          BODY="$RUNNER_TEMP/agent-pr-body.md"
+
+          cat > "$BODY" <<EOF
+          Implements #$ISSUE_NUMBER
+
+          ## Agent workflow
+
+          - Design/specification: ChatGPT + human approval, captured in issue #$ISSUE_NUMBER
+          - Implementation: Claude Code
+          - Independent review: Codex GitHub code review
+          - Remediation: Claude Code
+          - Final acceptance: human testing
+
+          ## Claude summary
+
+          $AGENT_SUMMARY
+
+          ## Validation
+
+          $AGENT_VALIDATION
+
+          ## AI-assisted contribution
+
+          This pull request was generated with AI assistance. Before submitting this
+          work upstream, the human contributor must review the implementation and confirm:
+
+          - [ ] I understand the changes and how they work.
+          - [ ] I take responsibility for this contribution under CONTRIBUTING.md.
+
+          This pull request must not be merged automatically.
+          EOF
+
+          EXISTING="$(
+            gh pr list \
+              --head "$BRANCH" \
+              --base "$BASE" \
+              --state open \
+              --json number \
+              --jq '.[0].number // empty'
+          )"
+
+          if [ -n "$EXISTING" ]; then
+            PR_NUMBER="$EXISTING"
+          else
+            PR_URL="$(
+              gh pr create \
+                --base "$BASE" \
+                --head "$BRANCH" \
+                --title "$PR_TITLE" \
+                --body-file "$BODY"
+            )"
+            PR_NUMBER="$(gh pr view "$PR_URL" --json number --jq '.number')"
+          fi
+
+          echo "number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
+
+      - name: Request Codex review and wait for result
+        id: codex
+        if: steps.pr.outputs.number != ''
+        env:
+          GH_TOKEN: ${{ secrets.AGENT_GITHUB_TOKEN }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          count_codex_reviews() {
+            gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/reviews" \
+              --jq '.[] | select(.user.login | startswith("chatgpt-codex-connector")) | .id' \
+              | wc -l \
+              | tr -d ' '
+          }
+
+          BASELINE="$(count_codex_reviews)"
+          REQUEST_COMMENT_ID="$(
+            gh api \
+              -X POST \
+              "repos/$REPO/issues/$PR_NUMBER/comments" \
+              -f body='@codex review' \
+              --jq '.id'
+          )"
+
+          DEADLINE=$((SECONDS + 900))
+          while [ "$SECONDS" -lt "$DEADLINE" ]; do
+            CURRENT="$(count_codex_reviews)"
+            if [ "$CURRENT" -gt "$BASELINE" ]; then
+              echo "result=findings" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+
+            CLEAN="$(
+              gh api --paginate \
+                -H "Accept: application/vnd.github+json" \
+                "repos/$REPO/issues/comments/$REQUEST_COMMENT_ID/reactions" \
+                --jq '.[] | select((.user.login | startswith("chatgpt-codex-connector")) and .content == "+1") | .id' \
+                | head -n 1
+            )"
+
+            if [ -n "$CLEAN" ]; then
+              echo "result=clean" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+
+            sleep 15
+          done
+
+          echo "result=pending" >> "$GITHUB_OUTPUT"
+
+      - name: Report clean review
+        if: steps.codex.outputs.result == 'clean'
+        env:
+          GH_TOKEN: ${{ secrets.AGENT_GITHUB_TOKEN }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+        shell: bash
+        run: |
+          gh pr comment "$PR_NUMBER" --body \
+            "Codex review completed with no actionable findings. CI still needs to pass, then this is ready for human testing."
+
+      - name: Report pending review
+        if: steps.codex.outputs.result == 'pending'
+        env:
+          GH_TOKEN: ${{ secrets.AGENT_GITHUB_TOKEN }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+        shell: bash
+        run: |
+          gh pr comment "$PR_NUMBER" --body \
+            "Codex review was requested but did not finish within the 15-minute monitoring window. If Codex later submits findings, the remediation workflow will still start automatically."
+
+      - name: Report non-implementation result
+        if: >-
+          steps.claude.outputs.conclusion == 'success' &&
+          steps.claude.outputs.structured_output != '' &&
+          fromJSON(steps.claude.outputs.structured_output).status != 'implemented'
+        env:
+          GH_TOKEN: ${{ secrets.AGENT_GITHUB_TOKEN }}
+          STATUS: ${{ fromJSON(steps.claude.outputs.structured_output).status }}
+          SUMMARY: ${{ fromJSON(steps.claude.outputs.structured_output).summary }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh issue comment "${{ github.event.issue.number }}" \
+            --body "Agent implementation stopped with status \`$STATUS\`: $SUMMARY"
