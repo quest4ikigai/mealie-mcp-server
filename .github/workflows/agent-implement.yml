@@ -268,7 +268,7 @@ jobs:
             CLEAN_COMMENT="$(
               gh api --paginate "repos/$REPO/issues/$PR_NUMBER/comments" \
                 | jq -r --argjson request "$REQUEST_COMMENT_ID" \
-                  '.[] | select(.id > $request) | select(.user.login | startswith("chatgpt-codex-connector")) | select(.body | contains("Didn\\u0027t find any major issues")) | .id' \
+                  '.[] | select(.id > $request) | select(.user.login | startswith("chatgpt-codex-connector")) | select(.body | contains("find any major issues")) | .id' \
                 | head -n 1
             )"
 
