@@ -6,6 +6,7 @@ import { registerTagTools } from './tags.js';
 import { registerShoppingListTools } from './shopping-lists.js';
 import { registerFoodTools } from './foods.js';
 import { registerUnitTools } from './units.js';
+import { registerToolTools } from './tools.js';
 
 export function registerAllTools(server: McpServer): void {
   registerRecipeTools(server);
@@ -15,4 +16,5 @@ export function registerAllTools(server: McpServer): void {
   registerShoppingListTools(server);
   registerFoodTools(server);
   registerUnitTools(server);
+  registerToolTools(server);
 }
