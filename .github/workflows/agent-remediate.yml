@@ -12,6 +12,7 @@ permissions:
   issues: write
   pull-requests: write
   actions: read
+  id-token: write
 
 concurrency:
   group: agent-remediate-${{ github.event.pull_request.number }}
@@ -148,17 +149,45 @@ jobs:
             --allowedTools Edit,Read,Write,Bash
             --json-schema '{"type":"object","properties":{"status":{"type":"string","enum":["fixed","blocked"]},"summary":{"type":"string"},"validation":{"type":"string"}},"required":["status","summary","validation"]}'
 
+      - name: Parse Claude result
+        id: claude_result
+        if: always() && fromJSON(steps.passes.outputs.count) <= 3
+        env:
+          RAW_RESULT: ${{ steps.claude.outputs.structured_output }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "$RAW_RESULT" ]; then
+            echo "status=" >> "$GITHUB_OUTPUT"
+            echo "summary=" >> "$GITHUB_OUTPUT"
+            echo "validation=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          STATUS="$(jq -r '.status // ""' <<<"$RAW_RESULT")"
+          SUMMARY="$(jq -r '.summary // ""' <<<"$RAW_RESULT")"
+          VALIDATION="$(jq -r '.validation // ""' <<<"$RAW_RESULT")"
+
+          {
+            echo "status=$STATUS"
+            echo "summary<<EOF"
+            echo "$SUMMARY"
+            echo "EOF"
+            echo "validation<<EOF"
+            echo "$VALIDATION"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Report blocked remediation
         if: >-
           fromJSON(steps.passes.outputs.count) <= 3 &&
           steps.claude.outputs.conclusion == 'success' &&
-          steps.claude.outputs.structured_output != '' &&
-          fromJSON(steps.claude.outputs.structured_output).status == 'blocked'
+          steps.claude_result.outputs.status == 'blocked'
         env:
           GH_TOKEN: ${{ secrets.AGENT_GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-          SUMMARY: ${{ fromJSON(steps.claude.outputs.structured_output).summary }}
-          VALIDATION: ${{ fromJSON(steps.claude.outputs.structured_output).validation }}
+          SUMMARY: ${{ steps.claude_result.outputs.summary }}
+          VALIDATION: ${{ steps.claude_result.outputs.validation }}
         shell: bash
         run: |
           set -euo pipefail
@@ -174,8 +203,7 @@ jobs:
         if: >-
           fromJSON(steps.passes.outputs.count) <= 3 &&
           steps.claude.outputs.conclusion == 'success' &&
-          steps.claude.outputs.structured_output != '' &&
-          fromJSON(steps.claude.outputs.structured_output).status == 'fixed'
+          steps.claude_result.outputs.status == 'fixed'
         env:
           GH_TOKEN: ${{ secrets.AGENT_GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -231,8 +259,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.AGENT_GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-          SUMMARY: ${{ fromJSON(steps.claude.outputs.structured_output).summary }}
-          VALIDATION: ${{ fromJSON(steps.claude.outputs.structured_output).validation }}
+          SUMMARY: ${{ steps.claude_result.outputs.summary }}
+          VALIDATION: ${{ steps.claude_result.outputs.validation }}
         shell: bash
         run: |
           set -euo pipefail
