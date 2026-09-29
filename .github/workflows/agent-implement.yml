@@ -5,12 +5,13 @@ name: Agent - Implement
 #   AGENT_GITHUB_TOKEN      - fine-grained PAT scoped only to this repository
 #                             with Contents, Issues, and Pull requests read/write.
 #
+# Reopening an approved [agent-build] issue is also a supported retry trigger.
 # Codex code review must be enabled for this repository. Reviews are requested
 # explicitly with "@codex review", so Codex auto-review may remain disabled.
 
 on:
   issues:
-    types: [opened]
+    types: [opened, reopened]
 
 permissions:
   contents: write
