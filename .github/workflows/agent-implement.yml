@@ -18,6 +18,7 @@ permissions:
   issues: write
   pull-requests: write
   actions: read
+  id-token: write
 
 concurrency:
   group: agent-implement-${{ github.event.issue.number }}
@@ -115,21 +116,49 @@ jobs:
             --allowedTools Edit,Read,Write,Bash
             --json-schema '{"type":"object","properties":{"status":{"type":"string","enum":["implemented","blocked","no_change"]},"summary":{"type":"string"},"validation":{"type":"string"}},"required":["status","summary","validation"]}'
 
+      - name: Parse Claude result
+        id: claude_result
+        if: always()
+        env:
+          RAW_RESULT: ${{ steps.claude.outputs.structured_output }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "$RAW_RESULT" ]; then
+            echo "status=" >> "$GITHUB_OUTPUT"
+            echo "summary=" >> "$GITHUB_OUTPUT"
+            echo "validation=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          STATUS="$(jq -r '.status // ""' <<<"$RAW_RESULT")"
+          SUMMARY="$(jq -r '.summary // ""' <<<"$RAW_RESULT")"
+          VALIDATION="$(jq -r '.validation // ""' <<<"$RAW_RESULT")"
+
+          {
+            echo "status=$STATUS"
+            echo "summary<<EOF"
+            echo "$SUMMARY"
+            echo "EOF"
+            echo "validation<<EOF"
+            echo "$VALIDATION"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Open pull request
         id: pr
         if: >-
           steps.claude.outputs.conclusion == 'success' &&
           steps.claude.outputs.branch_name != '' &&
-          steps.claude.outputs.structured_output != '' &&
-          fromJSON(steps.claude.outputs.structured_output).status == 'implemented'
+          steps.claude_result.outputs.status == 'implemented'
         env:
           GH_TOKEN: ${{ secrets.AGENT_GITHUB_TOKEN }}
           BRANCH: ${{ steps.claude.outputs.branch_name }}
           BASE: agent-main
           ISSUE_NUMBER: ${{ github.event.issue.number }}
           ISSUE_TITLE: ${{ github.event.issue.title }}
-          AGENT_SUMMARY: ${{ fromJSON(steps.claude.outputs.structured_output).summary }}
-          AGENT_VALIDATION: ${{ fromJSON(steps.claude.outputs.structured_output).validation }}
+          AGENT_SUMMARY: ${{ steps.claude_result.outputs.summary }}
+          AGENT_VALIDATION: ${{ steps.claude_result.outputs.validation }}
         shell: bash
         run: |
           set -euo pipefail
@@ -267,12 +296,12 @@ jobs:
       - name: Report non-implementation result
         if: >-
           steps.claude.outputs.conclusion == 'success' &&
-          steps.claude.outputs.structured_output != '' &&
-          fromJSON(steps.claude.outputs.structured_output).status != 'implemented'
+          steps.claude_result.outputs.status != '' &&
+          steps.claude_result.outputs.status != 'implemented'
         env:
           GH_TOKEN: ${{ secrets.AGENT_GITHUB_TOKEN }}
-          STATUS: ${{ fromJSON(steps.claude.outputs.structured_output).status }}
-          SUMMARY: ${{ fromJSON(steps.claude.outputs.structured_output).summary }}
+          STATUS: ${{ steps.claude_result.outputs.status }}
+          SUMMARY: ${{ steps.claude_result.outputs.summary }}
         shell: bash
         run: |
           set -euo pipefail
