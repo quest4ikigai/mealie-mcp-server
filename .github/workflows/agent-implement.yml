@@ -5,13 +5,13 @@ name: Agent - Implement
 #   AGENT_GITHUB_TOKEN      - fine-grained PAT scoped only to this repository
 #                             with Contents, Issues, and Pull requests read/write.
 #
-# Reopening an approved [agent-build] issue is also a supported retry trigger.
+# Assigning an approved [agent-build] issue to the repository owner is the supported retry trigger.
 # Codex code review must be enabled for this repository. Reviews are requested
 # explicitly with "@codex review", so Codex auto-review may remain disabled.
 
 on:
   issues:
-    types: [opened, reopened]
+    types: [opened, assigned]
 
 permissions:
   contents: write
@@ -28,7 +28,8 @@ jobs:
   implement:
     if: >-
       github.event.issue.user.login == github.repository_owner &&
-      startsWith(github.event.issue.title, '[agent-build]')
+      startsWith(github.event.issue.title, '[agent-build]') &&
+      (github.event.action == 'opened' || github.event.assignee.login == github.repository_owner)
     runs-on: ubuntu-latest
     timeout-minutes: 75
 
@@ -71,6 +72,7 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           base_branch: agent-main
+          assignee_trigger: "quest4ikigai"
           branch_prefix: claude/
           branch_name_template: "{{prefix}}issue-{{entityNumber}}-{{description}}"
           track_progress: true
