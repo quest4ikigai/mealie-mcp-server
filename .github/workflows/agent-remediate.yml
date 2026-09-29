@@ -198,6 +198,70 @@ jobs:
 
           **Validation:** $VALIDATION"
 
+      - name: Resolve addressed Codex review threads
+        if: >-
+          fromJSON(steps.passes.outputs.count) <= 3 &&
+          steps.claude.outputs.conclusion == 'success' &&
+          steps.claude_result.outputs.status == 'fixed'
+        env:
+          GH_TOKEN: ${{ secrets.AGENT_GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          OWNER="${REPO%%/*}"
+          NAME="${REPO#*/}"
+
+          THREAD_IDS="$(
+            gh api graphql \
+              -f owner="$OWNER" \
+              -f name="$NAME" \
+              -F number="$PR_NUMBER" \
+              -f query='
+                query($owner: String!, $name: String!, $number: Int!) {
+                  repository(owner: $owner, name: $name) {
+                    pullRequest(number: $number) {
+                      reviewThreads(first: 100) {
+                        nodes {
+                          id
+                          isResolved
+                          comments(first: 20) {
+                            nodes {
+                              author { login }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }' \
+              --jq '.data.repository.pullRequest.reviewThreads.nodes[]
+                | select(.isResolved == false)
+                | select(any(.comments.nodes[]; ((.author.login // "") | startswith("chatgpt-codex-connector"))))
+                | .id'
+          )"
+
+          if [ -z "$THREAD_IDS" ]; then
+            echo "No unresolved Codex review threads to resolve."
+            exit 0
+          fi
+
+          while IFS= read -r THREAD_ID; do
+            [ -n "$THREAD_ID" ] || continue
+            gh api graphql \
+              -f id="$THREAD_ID" \
+              -f query='
+                mutation($id: ID!) {
+                  resolveReviewThread(input: {threadId: $id}) {
+                    thread { id isResolved }
+                  }
+                }' \
+              >/dev/null
+            echo "Resolved Codex review thread $THREAD_ID"
+          done <<< "$THREAD_IDS"
+
       - name: Request Codex re-review and wait for result
         id: codex
         if: >-
