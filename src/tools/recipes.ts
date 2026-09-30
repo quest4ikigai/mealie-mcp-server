@@ -695,7 +695,10 @@ export function registerRecipeTools(server: McpServer) {
     'Runs update_recipe_taxonomy for multiple recipes with bounded concurrency (5 at a time), returning a ' +
       'success/error result per recipe. Each entry accepts the same legacy (categories/tags + mode) or delta ' +
       '(addCategories/removeCategories/addTags/removeTags) fields. Each slug may appear only once; a request ' +
-      'that repeats a slug is rejected as a whole before any recipe is processed.',
+      'that repeats a slug is rejected as a whole before any recipe is processed. Category/tag creation via ' +
+      'createMissing is serialized across the batch so a value requested by several recipes is created once, ' +
+      'but createMissing applies per entry: an entry without it may fail as missing even if another entry ' +
+      'creates that value, so set createMissing on every entry that names a new category or tag.',
     {
       updates: z
         .array(
