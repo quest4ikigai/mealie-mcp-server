@@ -694,7 +694,8 @@ export function registerRecipeTools(server: McpServer) {
     'update_recipe_taxonomy_batch',
     'Runs update_recipe_taxonomy for multiple recipes with bounded concurrency (5 at a time), returning a ' +
       'success/error result per recipe. Each entry accepts the same legacy (categories/tags + mode) or delta ' +
-      '(addCategories/removeCategories/addTags/removeTags) fields.',
+      '(addCategories/removeCategories/addTags/removeTags) fields. Each slug may appear only once; a request ' +
+      'that repeats a slug is rejected as a whole before any recipe is processed.',
     {
       updates: z
         .array(
@@ -708,9 +709,9 @@ export function registerRecipeTools(server: McpServer) {
           }),
         )
         .describe(
-          'One entry per recipe to update. Each recipe is processed independently with bounded concurrency — ' +
-            'a failure on one recipe does not abort the others, and the response includes a success/error result ' +
-            'for every entry.',
+          'One entry per recipe to update; slugs must be unique (duplicates reject the whole request with no ' +
+            'changes). Each recipe is processed independently with bounded concurrency — a failure on one recipe ' +
+            'does not abort the others, and the response includes a success/error result for every entry.',
         ),
     },
     async ({ updates }) => {
