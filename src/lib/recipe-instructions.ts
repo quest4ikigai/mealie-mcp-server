@@ -210,7 +210,9 @@ function validateIngredientRefs(ids: string[], known: Set<string>, what: string,
     if (!known.has(key)) {
       problems.push(
         `${what}: ingredientReferenceId '${id}' does not exist on the recipe's current ingredients. Re-read the ` +
-          'recipe with get_recipe_detailed and use its current referenceIds.',
+          'recipe with get_recipe_detailed and use its current referenceIds. If a re-read keeps returning ' +
+          'different ids for that ingredient, Mealie has never stored its referenceId; pin it first with ' +
+          'update_recipe_ingredients (complete replacement, supplying a referenceId), then re-read.',
       );
       continue;
     }

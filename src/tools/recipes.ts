@@ -816,7 +816,9 @@ export function registerRecipeTools(server: McpServer) {
       '(addInstructions/updateInstructions/removeInstructionIndexes — focused edits, all indexes and anchors ' +
       'refer to the original snapshot) or instructions (complete ordered replacement — use for substantial ' +
       'rebuilds/reordering; [] clears all). ingredientReferenceIds must be referenceIds of the recipe\'s current ' +
-      'ingredients (unknown, malformed or duplicate ids are rejected before any write); the MCP never infers links ' +
+      'ingredients (unknown, malformed or duplicate ids are rejected before any write; Mealie regenerates the id on every ' +
+      'read for an ingredient that never had one stored, so pin such ingredients first via update_recipe_ingredients ' +
+      'complete replacement with an explicit referenceId); the MCP never infers links ' +
       '— deciding wording, sectioning and which ingredients belong to a step is your job. Delta updates preserve ' +
       'omitted fields, untouched instructions and existing noteReferences exactly (existing dangling ingredient ' +
       'references are not cleaned up). A change that leaves instructions identical skips the write and returns the ' +
