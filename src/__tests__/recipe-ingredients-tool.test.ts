@@ -70,7 +70,7 @@ describe('update_recipe_ingredients tool', () => {
       ingredients: [{ note: 'olive oil' }],
     });
 
-    expect(mockUpdateRecipeIngredients).toHaveBeenCalledWith('chicken-shawarma', [{ note: 'olive oil' }]);
+    expect(mockUpdateRecipeIngredients).toHaveBeenCalledWith('chicken-shawarma', { ingredients: [{ note: 'olive oil' }] });
     expect(response.isError).toBeUndefined();
     expect(JSON.parse(response.content[0].text)).toEqual(updated);
   });
@@ -81,7 +81,7 @@ describe('update_recipe_ingredients tool', () => {
     const handler = handlers.get('update_recipe_ingredients')!;
     const response = await handler({ slug: 'chicken-shawarma', ingredients: [] });
 
-    expect(mockUpdateRecipeIngredients).toHaveBeenCalledWith('chicken-shawarma', []);
+    expect(mockUpdateRecipeIngredients).toHaveBeenCalledWith('chicken-shawarma', { ingredients: [] });
     expect(response.isError).toBeUndefined();
   });
 

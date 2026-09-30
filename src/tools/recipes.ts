@@ -131,6 +131,53 @@ const recipeIngredientInputSchema = z.object({
     ),
 });
 
+function recipeIngredientDeltaFields() {
+  return {
+    addIngredients: z
+      .array(
+        recipeIngredientInputSchema.extend({
+          insertAfterReferenceId: z
+            .string()
+            .uuid()
+            .optional()
+            .describe('Insert this row directly after the existing row with this referenceId. Not with insertBeforeReferenceId.'),
+          insertBeforeReferenceId: z
+            .string()
+            .uuid()
+            .optional()
+            .describe('Insert this row directly before the existing row with this referenceId. Not with insertAfterReferenceId.'),
+        }),
+      )
+      .optional()
+      .describe(
+        'Delta form: ingredient rows to add. Without an insert anchor a row is appended to the end, in the order ' +
+          'given; anchors must name an existing row that is not being removed, and rows sharing an anchor keep ' +
+          'their given order. A row with a "title" starts an ingredient section. An explicit referenceId must not ' +
+          'already exist on the recipe. Cannot be combined with ingredients.',
+      ),
+    updateIngredients: z
+      .array(
+        recipeIngredientInputSchema.extend({
+          referenceId: z.string().uuid().describe('referenceId of the existing row to update (from get_recipe_detailed).'),
+        }),
+      )
+      .optional()
+      .describe(
+        'Delta form: partial updates to existing rows, matched by referenceId. Only the fields supplied change; ' +
+          'everything else on the row is kept. foodId/foodName and unitId/unitName must each be given as a pair ' +
+          '(food/unit can be replaced but not cleared this way — use the complete-replacement form for that). ' +
+          'Set "title" to add/change/clear (null) a section heading. Cannot be combined with ingredients.',
+      ),
+    removeIngredientReferenceIds: z
+      .array(z.string().uuid())
+      .optional()
+      .describe(
+        'Delta form: referenceIds of existing rows to remove. Cannot be combined with ingredients, and cannot ' +
+          'overlap updateIngredients. Duplicate or unknown referenceIds reject the whole call before any write.',
+      ),
+  };
+}
+
 const conciseFields = [
   'name',
   'slug',
@@ -588,20 +635,30 @@ export function registerRecipeTools(server: McpServer) {
       'abbreviation/pluralAbbreviation for units). If verification fails (e.g. a nonexistent or mismatched ' +
       'foodId/unitId that Mealie silently dropped or resolved to the wrong entity), the recipe is restored to ' +
       'its pre-write state on a best-effort basis and this call reports failure — never a silent partial ' +
-      'write. Verification adds no extra request on success; a failed write adds one rollback request.',
+      'write. Verification adds no extra request on success; a failed write adds one rollback request. ' +
+      'Alternatively, use the delta form (addIngredients/updateIngredients/removeIngredientReferenceIds, ' +
+      'instead of ingredients) to edit rows incrementally by stable referenceId: retained rows keep their ' +
+      'order, updates edit in place, additions are appended or anchored with insertAfterReferenceId/' +
+      'insertBeforeReferenceId, and ingredient sections are just rows with a "title". The delta is applied to ' +
+      'the recipe\'s current ingredients, the complete final collection is built, and the same verified write ' +
+      'and rollback is used. Duplicate, unknown, or conflicting operations are rejected before any write. ' +
+      'Note Mealie generates a fresh referenceId on every read for rows that never had one stored, so such a ' +
+      'row may not be addressable by an id from an earlier read — use the complete-replacement form for it.',
     {
       slug: z.string().describe('Slug of the recipe to update.'),
       ingredients: z
         .array(recipeIngredientInputSchema)
+        .optional()
         .describe(
-          'Complete desired ingredient collection, in order — replaces the recipe\'s entire recipeIngredient ' +
-            'list. Pass every ingredient that should remain, not just the ones changing. An empty array clears ' +
-            'all ingredients.',
+          'Replacement form: complete desired ingredient collection, in order — replaces the recipe\'s entire ' +
+            'recipeIngredient list. Pass every ingredient that should remain, not just the ones changing. An ' +
+            'empty array clears all ingredients. Cannot be combined with the delta fields.',
         ),
+      ...recipeIngredientDeltaFields(),
     },
-    async ({ slug, ingredients }) => {
+    async ({ slug, ...input }) => {
       try {
-        const result = await updateRecipeIngredients(slug, ingredients);
+        const result = await updateRecipeIngredients(slug, input);
         return successResponse(result);
       } catch (error) {
         return errorResponse(error);
@@ -630,7 +687,9 @@ export function registerRecipeTools(server: McpServer) {
       `an empty batch, more than ${RECIPE_INGREDIENTS_BATCH_MAX_SIZE} recipes, a missing slug, or the same ` +
       'slug repeated in one call. The same recipeInstructions-id-regeneration caveat as ' +
       'update_recipe_ingredients applies to every recipe touched here (instruction content is preserved, only ' +
-      'ids churn).',
+      'ids churn). Each entry uses either the complete-replacement form (ingredients) or the referenceId ' +
+      'delta form (addIngredients/updateIngredients/removeIngredientReferenceIds) with the singular tool\'s ' +
+      'semantics; an invalid or conflicting entry fails only its own result, before that recipe is written.',
     {
       updates: z
         .array(
@@ -638,10 +697,13 @@ export function registerRecipeTools(server: McpServer) {
             slug: z.string().describe('Slug of the recipe to update.'),
             ingredients: z
               .array(recipeIngredientInputSchema)
+              .optional()
               .describe(
-                'Complete desired ingredient collection for this recipe, in order — replaces its entire ' +
-                  'recipeIngredient list. An empty array clears all ingredients for this recipe.',
+                'Replacement form: complete desired ingredient collection for this recipe, in order — replaces ' +
+                  'its entire recipeIngredient list. An empty array clears all ingredients for this recipe. ' +
+                  'Cannot be combined with the delta fields.',
               ),
+            ...recipeIngredientDeltaFields(),
           }),
         )
         .min(1, `At least one recipe update is required.`)

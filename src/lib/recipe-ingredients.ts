@@ -179,6 +179,239 @@ export class IngredientVerificationError extends Error {
   }
 }
 
+// ── Delta form ──────────────────────────────────────────────────────────────
+//
+// The delta form edits a recipe's ingredient collection incrementally, keyed on each row's stable
+// referenceId. It never writes anything itself: it reads the recipe's current collection (the same
+// GET the verified writer already makes for its rollback snapshot), computes the desired *complete*
+// final collection, and hands that to the existing verified writer — so post-write food/unit
+// verification and best-effort rollback are inherited unchanged. No food/unit matching or parsing
+// happens here; foodId/foodName and unitId/unitName must already be resolved, exactly as in the
+// replacement form.
+//
+// Ordering is deterministic: retained existing rows keep their relative order (updates edit in
+// place), removed rows disappear, and added rows go where their insertAfter/insertBefore anchor says
+// — or at the end, in the order given, when they have no anchor. Rows sharing an anchor keep the
+// order in which they were supplied.
+//
+// Caveat: Mealie synthesizes a fresh random referenceId on every read of a row whose referenceId was
+// never durably stored (see the rollback note below), so a referenceId copied from an earlier read
+// may not match the writer's own fresh read for such a row. That is rejected as an unknown
+// referenceId, before any write.
+
+export interface RecipeIngredientAddInput extends RecipeIngredientInput {
+  /** Insert directly after this existing (retained) row. */
+  insertAfterReferenceId?: string;
+  /** Insert directly before this existing (retained) row. */
+  insertBeforeReferenceId?: string;
+}
+
+export interface RecipeIngredientUpdateInput extends RecipeIngredientInput {
+  /** Identifies the existing row to update; only the other supplied fields change. */
+  referenceId: string;
+}
+
+export interface RecipeIngredientDelta {
+  addIngredients?: RecipeIngredientAddInput[];
+  updateIngredients?: RecipeIngredientUpdateInput[];
+  removeIngredientReferenceIds?: string[];
+}
+
+export interface RecipeIngredientsMutationInput extends RecipeIngredientDelta {
+  /** Replacement form: the complete new collection. Cannot be combined with the delta fields. */
+  ingredients?: RecipeIngredientInput[];
+}
+
+type IngredientPlan =
+  | { kind: 'replace'; ingredients: RecipeIngredientInput[] }
+  | { kind: 'delta'; delta: RecipeIngredientDelta };
+
+interface BuiltIngredients {
+  inputs: RecipeIngredientInput[];
+  payload: unknown[];
+}
+
+function refKey(value: string | undefined): string {
+  return (value ?? '').trim().toLowerCase();
+}
+
+function planFromInput(input: RecipeIngredientsMutationInput): IngredientPlan {
+  const { ingredients, addIngredients, updateIngredients, removeIngredientReferenceIds } = input;
+  const hasDelta = addIngredients !== undefined || updateIngredients !== undefined || removeIngredientReferenceIds !== undefined;
+
+  if (ingredients !== undefined && hasDelta) {
+    throw new Error(
+      'Use either ingredients (complete replacement) or the delta fields ' +
+        '(addIngredients/updateIngredients/removeIngredientReferenceIds), not both.',
+    );
+  }
+  if (ingredients !== undefined) return { kind: 'replace', ingredients };
+  if (!hasDelta) {
+    throw new Error(
+      'Provide ingredients (complete replacement) or at least one of addIngredients, updateIngredients, ' +
+        'removeIngredientReferenceIds.',
+    );
+  }
+  const total = (addIngredients?.length ?? 0) + (updateIngredients?.length ?? 0) + (removeIngredientReferenceIds?.length ?? 0);
+  if (total === 0) {
+    throw new Error('The delta contains no operations — supply at least one add, update, or removal.');
+  }
+  return { kind: 'delta', delta: { addIngredients, updateIngredients, removeIngredientReferenceIds } };
+}
+
+function existingToInput(raw: Record<string, unknown>, index: number): RecipeIngredientInput {
+  const input: RecipeIngredientInput = {};
+  for (const [label, key] of [['food', 'food'], ['unit', 'unit']] as const) {
+    const entity = raw[key];
+    if (entity === null || entity === undefined) continue;
+    const { id, name } = entity as { id?: unknown; name?: unknown };
+    if (typeof id !== 'string' || !id || typeof name !== 'string' || !name) {
+      throw new Error(`Existing ingredient ${index} has a ${label} without a usable id and name; cannot apply a delta safely.`);
+    }
+    if (key === 'food') {
+      input.foodId = id;
+      input.foodName = name;
+    } else {
+      input.unitId = id;
+      input.unitName = name;
+    }
+  }
+  for (const key of ['quantity', 'note', 'display', 'originalText', 'title', 'referenceId'] as const) {
+    if (raw[key] !== undefined) (input as Record<string, unknown>)[key] = raw[key];
+  }
+  return input;
+}
+
+function definedFields<T extends object>(value: T): Partial<T> {
+  return Object.fromEntries(Object.entries(value).filter(([, v]) => v !== undefined)) as Partial<T>;
+}
+
+function buildDeltaIngredients(original: Record<string, unknown>, delta: RecipeIngredientDelta): BuiltIngredients {
+  const rawRows = (Array.isArray(original.recipeIngredient) ? original.recipeIngredient : []) as Record<string, unknown>[];
+
+  const existing = new Map<string, number>();
+  const duplicateExisting = new Set<string>();
+  rawRows.forEach((row, i) => {
+    const key = refKey(row?.referenceId as string | undefined);
+    if (!key) return;
+    if (existing.has(key)) duplicateExisting.add(key);
+    existing.set(key, i);
+  });
+
+  const problems: string[] = [];
+  const requireExisting = (id: string | undefined, what: string): string | null => {
+    const key = refKey(id);
+    if (!key) {
+      problems.push(`${what} requires a non-empty referenceId.`);
+      return null;
+    }
+    if (!existing.has(key)) {
+      problems.push(`${what} references unknown referenceId '${id}' (not present on the recipe as currently stored).`);
+      return null;
+    }
+    if (duplicateExisting.has(key)) {
+      problems.push(`${what} references referenceId '${id}', which is ambiguous — several existing rows share it.`);
+      return null;
+    }
+    return key;
+  };
+
+  // Removals
+  const removed = new Set<string>();
+  for (const id of delta.removeIngredientReferenceIds ?? []) {
+    const key = requireExisting(id, 'Removal');
+    if (!key) continue;
+    if (removed.has(key)) problems.push(`Duplicate removal of referenceId '${id}'.`);
+    removed.add(key);
+  }
+
+  // Updates
+  const patches = new Map<string, Partial<RecipeIngredientInput>>();
+  for (const update of delta.updateIngredients ?? []) {
+    const key = requireExisting(update.referenceId, 'Update');
+    if (!key) continue;
+    if (patches.has(key)) problems.push(`Duplicate update of referenceId '${update.referenceId}'.`);
+    if (removed.has(key)) problems.push(`referenceId '${update.referenceId}' is both updated and removed.`);
+    const fields = definedFields(update);
+    delete fields.referenceId;
+    if (Object.keys(fields).length === 0) {
+      problems.push(`Update of referenceId '${update.referenceId}' changes no fields.`);
+    }
+    patches.set(key, fields);
+  }
+
+  // Additions
+  const addedKeys = new Set<string>();
+  const appended: RecipeIngredientInput[] = [];
+  const after = new Map<string, RecipeIngredientInput[]>();
+  const before = new Map<string, RecipeIngredientInput[]>();
+  for (const add of delta.addIngredients ?? []) {
+    const { insertAfterReferenceId, insertBeforeReferenceId, ...ingredient } = add;
+    const addKey = refKey(ingredient.referenceId);
+    if (addKey) {
+      if (existing.has(addKey)) {
+        problems.push(`Addition uses referenceId '${ingredient.referenceId}', which already exists on the recipe.`);
+      }
+      if (addedKeys.has(addKey)) problems.push(`Duplicate referenceId '${ingredient.referenceId}' among additions.`);
+      addedKeys.add(addKey);
+    }
+    if (insertAfterReferenceId !== undefined && insertBeforeReferenceId !== undefined) {
+      problems.push('An addition may set insertAfterReferenceId or insertBeforeReferenceId, not both.');
+      continue;
+    }
+    const anchorId = insertAfterReferenceId ?? insertBeforeReferenceId;
+    if (anchorId === undefined) {
+      appended.push(ingredient);
+      continue;
+    }
+    const anchorKey = requireExisting(anchorId, 'Addition anchor');
+    if (!anchorKey) continue;
+    if (removed.has(anchorKey)) {
+      problems.push(`Addition is anchored to referenceId '${anchorId}', which is being removed.`);
+      continue;
+    }
+    const target = insertAfterReferenceId !== undefined ? after : before;
+    target.set(anchorKey, [...(target.get(anchorKey) ?? []), ingredient]);
+  }
+
+  if (problems.length > 0) {
+    throw new Error(`Invalid ingredient delta, nothing was written: ${problems.join(' ')}`);
+  }
+
+  const inputs: RecipeIngredientInput[] = [];
+  const payload: unknown[] = [];
+  const emitAdded = (list: RecipeIngredientInput[] | undefined) => {
+    for (const ingredient of list ?? []) {
+      inputs.push(ingredient);
+      payload.push(toMealieIngredient(ingredient));
+    }
+  };
+
+  rawRows.forEach((row, i) => {
+    const key = refKey(row?.referenceId as string | undefined);
+    if (key && removed.has(key)) return;
+    emitAdded(key ? before.get(key) : undefined);
+
+    const existingInput = existingToInput(row, i);
+    const patch = key ? patches.get(key) : undefined;
+    if (patch) {
+      requirePairedField(patch.foodId, patch.foodName, 'foodId', 'foodName');
+      requirePairedField(patch.unitId, patch.unitName, 'unitId', 'unitName');
+      const merged = { ...existingInput, ...patch };
+      inputs.push(merged);
+      // Keep any Mealie-side fields the input model doesn't know about on the row being edited.
+      payload.push({ ...row, ...toMealieIngredient(merged) });
+    } else {
+      inputs.push(existingInput);
+      payload.push(row);
+    }
+    emitAdded(key ? after.get(key) : undefined);
+  });
+  emitAdded(appended);
+
+  return { inputs, payload };
+}
+
 function attachRequestCount(error: unknown, requestCount: number): void {
   if (error && typeof error === 'object') {
     (error as { requestCount?: number }).requestCount = requestCount;
@@ -189,6 +422,8 @@ interface IngredientWriteResult {
   recipe: Record<string, unknown>;
   /** Low-level Mealie API calls actually made — used by the batch layer to report accurate cost. */
   requestCount: number;
+  /** Number of ingredients in the collection that was written. */
+  ingredientCount: number;
 }
 
 /**
@@ -267,28 +502,30 @@ function buildRollbackIngredients(
   });
 }
 
-async function writeVerifiedIngredients(
-  slug: string,
-  ingredients: RecipeIngredientInput[],
-): Promise<IngredientWriteResult> {
-  const recipeIngredient = ingredients.map(toMealieIngredient);
-
+async function writeVerifiedIngredients(slug: string, plan: IngredientPlan): Promise<IngredientWriteResult> {
   let requestCount = 0;
   let original: Record<string, unknown>;
   let updated: Record<string, unknown>;
+  let built: BuiltIngredients;
   try {
+    // Replacement payloads are validated before the GET; delta payloads need the GET first to know
+    // the current rows. Either way, every check happens before the first write.
+    const replaced: BuiltIngredients | null =
+      plan.kind === 'replace' ? { inputs: plan.ingredients, payload: plan.ingredients.map(toMealieIngredient) } : null;
     original = await recipesApi.getRecipe(slug);
     requestCount += 1;
-    updated = await recipesApi.patchRecipe(slug, { recipeIngredient });
+    built = replaced ?? buildDeltaIngredients(original, (plan as { delta: RecipeIngredientDelta }).delta);
+    updated = await recipesApi.patchRecipe(slug, { recipeIngredient: built.payload });
     requestCount += 1;
   } catch (error) {
     attachRequestCount(error, requestCount);
     throw error;
   }
 
+  const ingredients = built.inputs;
   const failureReason = verifyPersistedIngredients(ingredients, updated.recipeIngredient);
   if (!failureReason) {
-    return { recipe: updated, requestCount };
+    return { recipe: updated, requestCount, ingredientCount: ingredients.length };
   }
 
   const originalIngredient = Array.isArray(original.recipeIngredient) ? original.recipeIngredient : [];
@@ -318,11 +555,17 @@ async function writeVerifiedIngredients(
   throw error;
 }
 
+/**
+ * Updates a recipe's structured ingredients, either by complete replacement (`ingredients`) or by
+ * referenceId-keyed delta (addIngredients/updateIngredients/removeIngredientReferenceIds). Both
+ * forms go through the same verified writer.
+ */
 export async function updateRecipeIngredients(
   slug: string,
-  ingredients: RecipeIngredientInput[],
+  input: RecipeIngredientInput[] | RecipeIngredientsMutationInput,
 ): Promise<Record<string, unknown>> {
-  const { recipe } = await writeVerifiedIngredients(slug, ingredients);
+  const plan = planFromInput(Array.isArray(input) ? { ingredients: input } : input);
+  const { recipe } = await writeVerifiedIngredients(slug, plan);
   return recipe;
 }
 
@@ -341,9 +584,8 @@ export async function updateRecipeIngredients(
 export const RECIPE_INGREDIENTS_BATCH_MAX_SIZE = 25;
 const BATCH_CONCURRENCY = 5;
 
-export interface RecipeIngredientsBatchUpdate {
+export interface RecipeIngredientsBatchUpdate extends RecipeIngredientsMutationInput {
   slug: string;
-  ingredients: RecipeIngredientInput[];
 }
 
 export interface RecipeIngredientsBatchError {
@@ -438,9 +680,10 @@ export async function updateRecipeIngredientsBatch(
     BATCH_CONCURRENCY,
     async (update, index) => {
       try {
-        const { requestCount } = await writeVerifiedIngredients(update.slug, update.ingredients);
+        const { slug, ...input } = update;
+        const { requestCount, ingredientCount } = await writeVerifiedIngredients(slug, planFromInput(input));
         requestCounts[index] = requestCount;
-        return { slug: update.slug, success: true, ingredientCount: update.ingredients.length };
+        return { slug, success: true, ingredientCount };
       } catch (error) {
         requestCounts[index] = (error as { requestCount?: number } | null)?.requestCount ?? 0;
         return { slug: update.slug, success: false, error: toBatchError(error) };
