@@ -712,7 +712,8 @@ export function registerRecipeTools(server: McpServer) {
           `At most ${RECIPE_INGREDIENTS_BATCH_MAX_SIZE} recipes are allowed per batch call.`,
         )
         .describe(
-          'One entry per recipe to update, each with its own complete ingredient collection. Each recipe is ' +
+          'One entry per recipe to update. Each entry uses either the replacement form (a complete ingredient ' +
+            'collection in `ingredients`) or the delta fields, never both. Each recipe is ' +
             'processed independently with bounded concurrency (5 at a time) — a failure on one recipe does not ' +
             `abort the others. Max ${RECIPE_INGREDIENTS_BATCH_MAX_SIZE} recipes per call; each slug must be unique ` +
             'within the call.',

@@ -63,7 +63,9 @@ Fields Mealie is known to normalize on its own — `display`, empty-string/`null
 
 If verification fails, the MCP makes a best-effort attempt to `PATCH` the recipe back to the `recipeIngredient` collection captured by the initial fetch, then reports the write as failed either way — a corrupted structured association is never reported as a success, even though the underlying Mealie write technically went through. If that rollback attempt itself fails, the error says so explicitly (`rollbackSucceeded: false`, plus the rollback attempt's own error) instead of silently leaving the recipe half-written. `update_recipe_ingredients_batch` reuses this exact same per-recipe write path; a verification failure and its rollback are scoped to that one recipe and never affect siblings in the same batch call.
 
-One field is deliberately *not* taken verbatim from that initial-fetch snapshot: each ingredient's `referenceId`. The rollback payload uses the *requested* ingredient's own `referenceId` at each position when one was supplied, falling back to the fetched snapshot's value only when it wasn't. This is necessary because of a Mealie quirk described next — blindly resending the snapshot's `referenceId` can silently swap in a value the caller never saw.
+**This applies to replacement writes.** For delta writes (referenceId-based add/update/remove), the requested list's positions do not align with the original rows, so rollback restores the initial-fetch snapshot verbatim, with no positional `referenceId` substitution.
+
+For replacement writes, one field is deliberately *not* taken verbatim from that initial-fetch snapshot: each ingredient's `referenceId`. The rollback payload uses the *requested* ingredient's own `referenceId` at each position when one was supplied, falling back to the fetched snapshot's value only when it wasn't. This is necessary because of a Mealie quirk described next — blindly resending the snapshot's `referenceId` can silently swap in a value the caller never saw.
 
 ### `reference_id` can differ between two reads of the same never-pinned ingredient
 
