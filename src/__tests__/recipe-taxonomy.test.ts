@@ -274,6 +274,16 @@ describe('updateRecipeTaxonomyBatch', () => {
     }
   });
 
+  it('rejects duplicate slugs before making any request', async () => {
+    await expect(
+      updateRecipeTaxonomyBatch([
+        { slug: 'same', addTags: ['B'] },
+        { slug: 'same', addTags: ['C'] },
+      ]),
+    ).rejects.toThrow(/Duplicate recipe slug/);
+    expect(mockGetRecipe).not.toHaveBeenCalled();
+  });
+
   it('bounds concurrency instead of firing all requests at once', async () => {
     let inFlight = 0;
     let maxInFlight = 0;

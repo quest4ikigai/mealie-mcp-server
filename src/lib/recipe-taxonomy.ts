@@ -302,6 +302,20 @@ const BATCH_CONCURRENCY = 5;
 export async function updateRecipeTaxonomyBatch(
   updates: RecipeTaxonomyBatchUpdate[],
 ): Promise<RecipeTaxonomyBatchResult[]> {
+  const seen = new Set<string>();
+  const duplicates = new Set<string>();
+  for (const update of updates) {
+    const slug = update.slug.trim();
+    if (seen.has(slug)) duplicates.add(slug);
+    seen.add(slug);
+  }
+  if (duplicates.size > 0) {
+    throw new TaxonomyValidationError(
+      `Duplicate recipe slug(s) in the same batch call: ${[...duplicates].join(', ')}. ` +
+        'Each recipe may appear at most once per batch — submit a second call for a repeat update.',
+    );
+  }
+
   let tail: Promise<unknown> = Promise.resolve();
   const serializeCreation = <T>(fn: () => Promise<T>): Promise<T> => {
     const run = tail.then(fn, fn);
