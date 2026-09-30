@@ -1387,12 +1387,32 @@ describe('updateRecipeIngredients — delta form', () => {
     ['anchor on removed row', { addIngredients: [{ note: 'x', insertAfterReferenceId: 'ref-a' }], removeIngredientReferenceIds: ['ref-a'] }],
     ['both anchors', { addIngredients: [{ note: 'x', insertAfterReferenceId: 'ref-a', insertBeforeReferenceId: 'ref-b' }] }],
     ['unpaired food in update', { updateIngredients: [{ referenceId: 'ref-a', foodId: 'f2' }] }],
+    ['blank foodName alone in update', { updateIngredients: [{ referenceId: 'ref-a', foodName: '' }] }],
+    ['blank food pair in update', { updateIngredients: [{ referenceId: 'ref-a', foodId: '', foodName: '' }] }],
+    ['whitespace unit pair in update', { updateIngredients: [{ referenceId: 'ref-a', unitId: ' ', unitName: '  ' }] }],
     ['empty delta', { addIngredients: [] }],
     ['replacement combined with delta', { ingredients: [], removeIngredientReferenceIds: ['ref-a'] }],
     ['nothing at all', {}],
   ])('rejects %s before any write', async (_name, input) => {
     await expect(updateRecipeIngredients('r', input as never)).rejects.toThrow();
     expect(mockPatchRecipe).not.toHaveBeenCalled();
+  });
+
+  it('explains that a blank food/unit pair cannot clear the association in a delta update', async () => {
+    await expect(
+      updateRecipeIngredients('r', { updateIngredients: [{ referenceId: 'ref-a', foodId: '', foodName: '' }] }),
+    ).rejects.toThrow(/must supply both foodId and foodName as non-blank values.*cannot be cleared with a delta update/);
+    await expect(
+      updateRecipeIngredients('r', { updateIngredients: [{ referenceId: 'ref-a', foodName: '' }] }),
+    ).rejects.toThrow(/must supply both foodId and foodName/);
+    expect(mockPatchRecipe).not.toHaveBeenCalled();
+  });
+
+  it('still replaces a food when the update supplies a non-blank pair', async () => {
+    await updateRecipeIngredients('r', {
+      updateIngredients: [{ referenceId: 'ref-a', foodId: '00000000-0000-0000-0000-000000000002', foodName: 'Sugar' }],
+    });
+    expect(written()[0]).toMatchObject({ referenceId: 'ref-a', food: { id: '00000000-0000-0000-0000-000000000002', name: 'Sugar' } });
   });
 
   it('keeps the legacy array and { ingredients } forms working', async () => {

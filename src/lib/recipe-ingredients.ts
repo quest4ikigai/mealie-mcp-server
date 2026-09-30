@@ -332,6 +332,21 @@ function buildDeltaIngredients(original: Record<string, unknown>, delta: RecipeI
     if (!key) continue;
     if (patches.has(key)) problems.push(`Duplicate update of referenceId '${update.referenceId}'.`);
     if (removed.has(key)) problems.push(`referenceId '${update.referenceId}' is both updated and removed.`);
+    // A delta update can replace a food/unit but never clear one: any supplied half of a pair must
+    // come with its partner, and both must be non-blank (clearing needs the replacement form).
+    for (const [idKey, nameKey, label] of [
+      ['foodId', 'foodName', 'food'],
+      ['unitId', 'unitName', 'unit'],
+    ] as const) {
+      if (update[idKey] === undefined && update[nameKey] === undefined) continue;
+      if (!update[idKey]?.trim() || !update[nameKey]?.trim()) {
+        problems.push(
+          `Update of referenceId '${update.referenceId}' must supply both ${idKey} and ${nameKey} as non-blank ` +
+            `values to replace the ${label}; a ${label} cannot be cleared with a delta update (use the ` +
+            'complete-replacement form).',
+        );
+      }
+    }
     const fields = definedFields(update);
     delete fields.referenceId;
     if (Object.keys(fields).length === 0) {
