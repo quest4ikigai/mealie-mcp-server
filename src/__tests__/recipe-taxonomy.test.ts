@@ -396,4 +396,36 @@ describe('delta taxonomy updates', () => {
     ]);
     expect(results.map((r) => r.success)).toEqual([true, false, false]);
   });
+
+  it('creates nothing when a later collection fails validation', async () => {
+    await expect(
+      updateRecipeTaxonomy('chicken-shawarma', {
+        addCategories: ['New'],
+        removeTags: ['Missing'],
+        createMissing: true,
+      }),
+    ).rejects.toThrow(UnknownRemovalTaxonomyError);
+    expect(mockCreateCategory).not.toHaveBeenCalled();
+    expect(mockCreateTag).not.toHaveBeenCalled();
+    expect(mockPatchRecipe).not.toHaveBeenCalled();
+  });
+
+  it('creates a shared missing organizer once across a concurrent batch', async () => {
+    const created: unknown[] = [];
+    mockGetTags.mockImplementation(() => Promise.resolve(paginated([QUICK, DAIRY_FREE, ...created] as never[])));
+    mockCreateTag.mockImplementation(async (name: string) => {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      const tag = { id: 'tag-new', name, slug: name.toLowerCase(), groupId: 'group-1' };
+      created.push(tag);
+      return tag;
+    });
+
+    const results = await updateRecipeTaxonomyBatch([
+      { slug: 'a', addTags: ['Spicy'], createMissing: true },
+      { slug: 'b', addTags: ['Spicy'], createMissing: true },
+    ]);
+
+    expect(results.map((r) => r.success)).toEqual([true, true]);
+    expect(mockCreateTag).toHaveBeenCalledTimes(1);
+  });
 });

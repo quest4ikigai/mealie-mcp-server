@@ -77,6 +77,11 @@ async function getAllTags(): Promise<TaxonomyItem[]> {
   return result.items.map(toTaxonomyItem);
 }
 
+/** Optionally wraps the list-then-create section so concurrent callers don't create duplicates. */
+export interface TaxonomySerializeOptions {
+  serializeCreation?: <T>(fn: () => Promise<T>) => Promise<T>;
+}
+
 export interface TaxonomyPatchOutcome {
   patchFields: Record<string, unknown>;
   categories?: TaxonomyCollectionResult;
@@ -191,6 +196,7 @@ async function buildCollectionOutcome(
 export async function buildTaxonomyPatch(
   currentRecipe: Record<string, unknown>,
   input: TaxonomyUpdateInput,
+  options?: TaxonomySerializeOptions,
 ): Promise<TaxonomyPatchOutcome> {
   validateInput(input);
   const mode = input.mode ?? 'merge';
@@ -232,14 +238,33 @@ export async function buildTaxonomyPatch(
     ]);
   }
 
-  for (const [config, outcomeKey, patchKey] of configs) {
-    const result = await buildCollectionOutcome(config, mode, createMissing);
-    outcome[outcomeKey] = result;
-    const isDelta = config.replace === undefined;
-    // Delta no-ops skip the write; legacy calls keep writing as before.
-    if (!isDelta || result.added.length > 0 || result.removed.length > 0) {
-      patchFields[patchKey] = result.final.map(toApiPayloadItem);
+  const resolveAll = async () => {
+    // Validate every collection without creating anything, so a failure in a later collection
+    // cannot leave organizers created for an earlier one.
+    if (createMissing && configs.length > 1) {
+      for (const [config] of configs) {
+        const dryConfig: KindConfig = {
+          ...config,
+          createFn: (name) => Promise.resolve({ id: `pending-${name}`, name, slug: name }),
+        };
+        await buildCollectionOutcome(dryConfig, mode, createMissing);
+      }
     }
+    for (const [config, outcomeKey, patchKey] of configs) {
+      const result = await buildCollectionOutcome(config, mode, createMissing);
+      outcome[outcomeKey] = result;
+      const isDelta = config.replace === undefined;
+      // Delta no-ops skip the write; legacy calls keep writing as before.
+      if (!isDelta || result.added.length > 0 || result.removed.length > 0) {
+        patchFields[patchKey] = result.final.map(toApiPayloadItem);
+      }
+    }
+  };
+
+  if (createMissing && options?.serializeCreation) {
+    await options.serializeCreation(resolveAll);
+  } else {
+    await resolveAll();
   }
 
   return outcome;
@@ -255,9 +280,10 @@ export async function buildTaxonomyPatch(
 export async function updateRecipeTaxonomy(
   slug: string,
   input: TaxonomyUpdateInput,
+  options?: TaxonomySerializeOptions,
 ): Promise<RecipeTaxonomyResult> {
   const recipe = await recipesApi.getRecipe(slug);
-  const outcome = await buildTaxonomyPatch(recipe, input);
+  const outcome = await buildTaxonomyPatch(recipe, input, options);
 
   if (Object.keys(outcome.patchFields).length > 0) {
     await recipesApi.patchRecipe(slug, outcome.patchFields);
@@ -276,9 +302,16 @@ const BATCH_CONCURRENCY = 5;
 export async function updateRecipeTaxonomyBatch(
   updates: RecipeTaxonomyBatchUpdate[],
 ): Promise<RecipeTaxonomyBatchResult[]> {
+  let tail: Promise<unknown> = Promise.resolve();
+  const serializeCreation = <T>(fn: () => Promise<T>): Promise<T> => {
+    const run = tail.then(fn, fn);
+    tail = run.catch(() => undefined);
+    return run;
+  };
+
   return mapWithConcurrency(updates, BATCH_CONCURRENCY, async (update) => {
     try {
-      const result = await updateRecipeTaxonomy(update.slug, update);
+      const result = await updateRecipeTaxonomy(update.slug, update, { serializeCreation });
       return { success: true as const, ...result };
     } catch (error) {
       return {
