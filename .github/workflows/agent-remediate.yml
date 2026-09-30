@@ -1,7 +1,17 @@
 name: Agent - Remediate Codex Review
 
 # Triggered only by reviews submitted by the Codex GitHub integration on
-# Claude-created PR branches. Up to three remediation passes are allowed.
+# Claude-created PR branches.
+#
+# Normal mode allows up to three automated Codex -> Sonnet remediation cycles.
+# The counter is stored explicitly in the PR review-status comment, so manual
+# reviews and owner-requested /agent-fix reviews do not consume the budget.
+#
+# If a Codex review still has findings after those three automated cycles, the
+# workflow escalates once: Opus performs a holistic read-only audit of the whole
+# current PR, then a separate Opus session applies all validated findings in one
+# consolidated fix. After that deterministic validation runs and automated review
+# stops; human acceptance/live testing is the final gate.
 
 on:
   pull_request_review:
@@ -26,7 +36,7 @@ jobs:
       startsWith(github.event.pull_request.head.ref, 'claude/') &&
       startsWith(github.event.review.user.login, 'chatgpt-codex-connector')
     runs-on: ubuntu-latest
-    timeout-minutes: 75
+    timeout-minutes: 90
     env:
       MAX_REMEDIATION_PASSES: 3
 
@@ -47,8 +57,25 @@ jobs:
             exit 1
           fi
 
-      - name: Count Codex review passes
-        id: passes
+      - name: Checkout pull request branch
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          corepack enable
+          yarn install --immutable
+
+      - name: Read review-cycle state
+        id: context
         env:
           GH_TOKEN: ${{ secrets.AGENT_GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -56,48 +83,66 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          COUNT="$(
-            gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/reviews" \
-              --jq '.[] | select(.user.login | startswith("chatgpt-codex-connector")) | .id' \
-              | wc -l \
-              | tr -d ' '
-          )"
-          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
-          echo "Codex review pass: $COUNT"
 
-      - name: Stop after remediation limit
-        if: fromJSON(steps.passes.outputs.count) > 3
+          STATE="$(bash .github/scripts/agent-review-state.sh get)"
+          PASSES="$(sed -n 's/^passes=//p' <<<"$STATE")"
+          FINAL="$(sed -n 's/^final=//p' <<<"$STATE")"
+          ORIGIN="$(bash .github/scripts/agent-review-state.sh latest-origin)"
+
+          COUNTABLE=false
+          case "$ORIGIN" in
+            initial|remediation) COUNTABLE=true ;;
+          esac
+
+          NORMAL=false
+          ESCALATE=false
+          if [ "$FINAL" = "not_started" ]; then
+            if [ "$COUNTABLE" = "true" ] && [ "$PASSES" -ge "$MAX_REMEDIATION_PASSES" ]; then
+              ESCALATE=true
+            else
+              NORMAL=true
+            fi
+          fi
+
+          {
+            echo "passes=$PASSES"
+            echo "final=$FINAL"
+            echo "origin=$ORIGIN"
+            echo "countable=$COUNTABLE"
+            echo "normal=$NORMAL"
+            echo "escalate=$ESCALATE"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "Review origin: $ORIGIN"
+          echo "Automated remediation passes: $PASSES / $MAX_REMEDIATION_PASSES"
+          echo "Final audit state: $FINAL"
+          echo "Normal remediation: $NORMAL"
+          echo "Escalate: $ESCALATE"
+
+      - name: Mark normal remediation running
+        if: steps.context.outputs.normal == 'true'
         env:
           GH_TOKEN: ${{ secrets.AGENT_GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          PASSES: ${{ steps.context.outputs.passes }}
+          FINAL: not_started
         shell: bash
         run: |
           set -euo pipefail
-          gh pr comment "$PR_NUMBER" --body \
-            "Agent review/fix loop reached the configured limit of $MAX_REMEDIATION_PASSES remediation passes. Human review is required before continuing."
-
-      - name: Checkout pull request branch
-        if: fromJSON(steps.passes.outputs.count) <= 3
-        uses: actions/checkout@v7
-        with:
-          ref: ${{ github.event.pull_request.head.ref }}
-          fetch-depth: 0
-
-      - name: Set up Node.js
-        if: fromJSON(steps.passes.outputs.count) <= 3
-        uses: actions/setup-node@v6
-        with:
-          node-version: 22
-
-      - name: Install dependencies
-        if: fromJSON(steps.passes.outputs.count) <= 3
-        shell: bash
-        run: |
-          corepack enable
-          yarn install --immutable
+          if [ "${{ steps.context.outputs.countable }}" = "true" ]; then
+            NEXT=$((PASSES + 1))
+            STAGE="Codex findings received; automated remediation pass $NEXT/$MAX_REMEDIATION_PASSES is running."
+          else
+            STAGE="Codex findings received; remediation is running without consuming the automated pass budget."
+          fi
+          export STAGE
+          DETAILS="Review trigger origin: ${{ steps.context.outputs.origin }}."
+          export DETAILS
+          bash .github/scripts/agent-review-state.sh set >/dev/null
 
       - name: Remediate Codex findings
-        if: fromJSON(steps.passes.outputs.count) <= 3
+        if: steps.context.outputs.normal == 'true'
         id: claude
         uses: anthropics/claude-code-action@v1
         with:
@@ -140,7 +185,7 @@ jobs:
               yarn test
               yarn build
             - If generated documentation is stale after your changes, run yarn gen:docs
-              and repeat the relevant checks.
+              and repeat the relevant validation commands.
             - Commit and push fixes only to the existing pull request branch.
             - Never merge the pull request or push directly to main or agent-main.
           claude_args: |
@@ -149,9 +194,9 @@ jobs:
             --allowedTools Edit,Read,Write,Bash
             --json-schema '{"type":"object","properties":{"status":{"type":"string","enum":["fixed","blocked"]},"summary":{"type":"string"},"validation":{"type":"string"}},"required":["status","summary","validation"]}'
 
-      - name: Parse Claude result
+      - name: Parse normal remediation result
         id: claude_result
-        if: always() && fromJSON(steps.passes.outputs.count) <= 3
+        if: always() && steps.context.outputs.normal == 'true'
         env:
           RAW_RESULT: ${{ steps.claude.outputs.structured_output }}
         shell: bash
@@ -178,21 +223,29 @@ jobs:
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Report blocked remediation
+      - name: Report blocked normal remediation
         if: >-
-          fromJSON(steps.passes.outputs.count) <= 3 &&
+          steps.context.outputs.normal == 'true' &&
           steps.claude.outputs.conclusion == 'success' &&
           steps.claude_result.outputs.status == 'blocked'
         env:
           GH_TOKEN: ${{ secrets.AGENT_GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          PASSES: ${{ steps.context.outputs.passes }}
+          FINAL: not_started
           SUMMARY: ${{ steps.claude_result.outputs.summary }}
           VALIDATION: ${{ steps.claude_result.outputs.validation }}
         shell: bash
         run: |
           set -euo pipefail
-          gh pr comment "$PR_NUMBER" --body \
-            "Claude could not safely resolve the latest Codex review without human input.
+          STAGE="Claude could not safely resolve the latest Codex finding; human input is required."
+          DETAILS="**Reason:** $SUMMARY
+
+          **Validation:** $VALIDATION"
+          export STAGE DETAILS
+          bash .github/scripts/agent-review-state.sh set >/dev/null
+          gh pr comment "$PR_NUMBER" --body             "Claude could not safely resolve the latest Codex review without human input.
 
           **Reason:** $SUMMARY
 
@@ -200,7 +253,7 @@ jobs:
 
       - name: Resolve addressed Codex review threads
         if: >-
-          fromJSON(steps.passes.outputs.count) <= 3 &&
+          steps.context.outputs.normal == 'true' &&
           steps.claude.outputs.conclusion == 'success' &&
           steps.claude_result.outputs.status == 'fixed'
         env:
@@ -210,146 +263,373 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          bash .github/scripts/agent-review-state.sh resolve-threads
 
-          OWNER="${REPO%%/*}"
-          NAME="${REPO#*/}"
-
-          THREAD_IDS="$(
-            gh api graphql \
-              -f owner="$OWNER" \
-              -f name="$NAME" \
-              -F number="$PR_NUMBER" \
-              -f query='
-                query($owner: String!, $name: String!, $number: Int!) {
-                  repository(owner: $owner, name: $name) {
-                    pullRequest(number: $number) {
-                      reviewThreads(first: 100) {
-                        nodes {
-                          id
-                          isResolved
-                          comments(first: 20) {
-                            nodes {
-                              author { login }
-                            }
-                          }
-                        }
-                      }
-                    }
-                  }
-                }' \
-              --jq '.data.repository.pullRequest.reviewThreads.nodes[]
-                | select(.isResolved == false)
-                | select(any(.comments.nodes[]; ((.author.login // "") | startswith("chatgpt-codex-connector"))))
-                | .id'
-          )"
-
-          if [ -z "$THREAD_IDS" ]; then
-            echo "No unresolved Codex review threads to resolve."
-            exit 0
+      - name: Advance automated remediation state
+        id: advance
+        if: >-
+          steps.context.outputs.normal == 'true' &&
+          steps.claude.outputs.conclusion == 'success' &&
+          steps.claude_result.outputs.status == 'fixed'
+        env:
+          GH_TOKEN: ${{ secrets.AGENT_GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          CURRENT_PASSES: ${{ steps.context.outputs.passes }}
+          COUNTABLE: ${{ steps.context.outputs.countable }}
+          FINAL: not_started
+        shell: bash
+        run: |
+          set -euo pipefail
+          NEW_PASSES="$CURRENT_PASSES"
+          if [ "$COUNTABLE" = "true" ]; then
+            NEW_PASSES=$((CURRENT_PASSES + 1))
           fi
+          echo "passes=$NEW_PASSES" >> "$GITHUB_OUTPUT"
 
-          while IFS= read -r THREAD_ID; do
-            [ -n "$THREAD_ID" ] || continue
-            gh api graphql \
-              -f id="$THREAD_ID" \
-              -f query='
-                mutation($id: ID!) {
-                  resolveReviewThread(input: {threadId: $id}) {
-                    thread { id isResolved }
-                  }
-                }' \
-              >/dev/null
-            echo "Resolved Codex review thread $THREAD_ID"
-          done <<< "$THREAD_IDS"
+          PASSES="$NEW_PASSES"
+          STAGE="Claude remediation complete; requesting Codex re-review."
+          DETAILS="Automated remediation budget used: $NEW_PASSES/$MAX_REMEDIATION_PASSES."
+          export PASSES STAGE DETAILS
+          bash .github/scripts/agent-review-state.sh set >/dev/null
 
       - name: Request Codex re-review and wait for result
         id: codex
         if: >-
-          fromJSON(steps.passes.outputs.count) <= 3 &&
+          steps.context.outputs.normal == 'true' &&
           steps.claude.outputs.conclusion == 'success' &&
           steps.claude_result.outputs.status == 'fixed'
         env:
           GH_TOKEN: ${{ secrets.AGENT_GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
+          PASSES: ${{ steps.advance.outputs.passes }}
+          FINAL: not_started
         shell: bash
         run: |
           set -euo pipefail
 
-          count_codex_reviews() {
-            gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/reviews" \
-              --jq '.[] | select(.user.login | startswith("chatgpt-codex-connector")) | .id' \
-              | wc -l \
-              | tr -d ' '
-          }
+          REQUEST_OUTPUT="$(bash .github/scripts/agent-review-state.sh request remediation)"
+          REQUEST_COMMENT_ID="$(sed -n 's/^request_comment_id=//p' <<<"$REQUEST_OUTPUT")"
+          BASELINE="$(sed -n 's/^baseline=//p' <<<"$REQUEST_OUTPUT")"
 
-          BASELINE="$(count_codex_reviews)"
-          REQUEST_COMMENT_ID="$(
-            gh api \
-              -X POST \
-              "repos/$REPO/issues/$PR_NUMBER/comments" \
-              -f body='@codex review' \
-              --jq '.id'
-          )"
+          STAGE="Codex re-review running."
+          DETAILS="Waiting on review of commit $(git rev-parse --short HEAD)."
+          export STAGE DETAILS
+          bash .github/scripts/agent-review-state.sh set >/dev/null
 
-          DEADLINE=$((SECONDS + 900))
-          while [ "$SECONDS" -lt "$DEADLINE" ]; do
-            CURRENT="$(count_codex_reviews)"
-            if [ "$CURRENT" -gt "$BASELINE" ]; then
-              echo "result=findings" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
+          RESULT="$(bash .github/scripts/agent-review-state.sh wait "$REQUEST_COMMENT_ID" "$BASELINE")"
+          echo "result=$RESULT" >> "$GITHUB_OUTPUT"
 
-            CLEAN_REACTION="$(
-              gh api --paginate \
-                -H "Accept: application/vnd.github+json" \
-                "repos/$REPO/issues/comments/$REQUEST_COMMENT_ID/reactions" \
-                --jq '.[] | select((.user.login | startswith("chatgpt-codex-connector")) and .content == "+1") | .id' \
-                | head -n 1
-            )"
-
-            CLEAN_COMMENT="$(
-              gh api --paginate "repos/$REPO/issues/$PR_NUMBER/comments" \
-                | jq -r --argjson request "$REQUEST_COMMENT_ID" \
-                  '.[] | select(.id > $request) | select(.user.login | startswith("chatgpt-codex-connector")) | select(.body | contains("find any major issues")) | .id' \
-                | head -n 1
-            )"
-
-            if [ -n "$CLEAN_REACTION" ] || [ -n "$CLEAN_COMMENT" ]; then
-              echo "result=clean" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-
-            sleep 15
-          done
-
-          echo "result=pending" >> "$GITHUB_OUTPUT"
-
-      - name: Report clean review
+      - name: Report clean re-review
         if: steps.codex.outputs.result == 'clean'
         env:
           GH_TOKEN: ${{ secrets.AGENT_GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-          SUMMARY: ${{ steps.claude_result.outputs.summary }}
-          VALIDATION: ${{ steps.claude_result.outputs.validation }}
+          REPO: ${{ github.repository }}
+          PASSES: ${{ steps.advance.outputs.passes }}
+          FINAL: not_started
+          STAGE: Codex re-review completed with no actionable findings.
+          DETAILS: CI still needs to pass; then this is ready for human acceptance and live testing.
         shell: bash
         run: |
           set -euo pipefail
-          gh pr comment "$PR_NUMBER" --body \
-            "Claude addressed the prior Codex findings and the follow-up Codex review found no additional actionable issues.
-
-          **Claude summary:** $SUMMARY
-
-          **Validation:** $VALIDATION
-
-          CI still needs to pass, then this is ready for human testing."
+          bash .github/scripts/agent-review-state.sh set >/dev/null
 
       - name: Report pending re-review
         if: steps.codex.outputs.result == 'pending'
         env:
           GH_TOKEN: ${{ secrets.AGENT_GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          PASSES: ${{ steps.advance.outputs.passes }}
+          FINAL: not_started
+          STAGE: Codex re-review is still running beyond the 15-minute monitor window.
+          DETAILS: The review can still finish later; submitted findings will trigger the next remediation stage automatically.
         shell: bash
         run: |
-          gh pr comment "$PR_NUMBER" --body \
-            "Claude pushed remediation changes and requested another Codex review, but it did not finish within the 15-minute monitoring window. If Codex later submits findings, another remediation pass will start automatically."
+          set -euo pipefail
+          bash .github/scripts/agent-review-state.sh set >/dev/null
+
+      # ---- One-shot escalation path -------------------------------------------------
+
+      - name: Mark final holistic audit running
+        if: steps.context.outputs.escalate == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.AGENT_GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          PASSES: ${{ steps.context.outputs.passes }}
+          FINAL: running
+          STAGE: Automated remediation budget exhausted; Opus holistic final audit is running.
+          DETAILS: The final audit reviews the entire current PR and all prior findings in one pass. It is read-only.
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash .github/scripts/agent-review-state.sh set >/dev/null
+
+      - name: Run holistic final audit
+        if: steps.context.outputs.escalate == 'true'
+        id: final_audit
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          allowed_bots: "chatgpt-codex-connector,chatgpt-codex-connector[bot]"
+          additional_permissions: |
+            actions: read
+          prompt: |
+            Perform the one-shot final holistic audit for PR #${{ github.event.pull_request.number }}.
+
+            This PR has already gone through three automated Codex -> Claude remediation cycles
+            and Codex has submitted another finding. Previous reviews may have surfaced issues
+            incrementally. Do NOT review only the latest patch.
+
+            Read and independently audit:
+            - the COMPLETE current PR diff against agent-main,
+            - the originating issue/design contract,
+            - every Codex review and inline review thread, including resolved/outdated threads,
+            - all remediation commits and current resulting code,
+            - CLAUDE.md,
+            - AGENTS.md,
+            - CONTRIBUTING.md,
+            - ARCHITECTURE.md,
+            - WORKFLOWS.md,
+            - generated API/tool documentation,
+            - and relevant tests.
+
+            Audit the whole resulting feature for:
+            - correctness and data-loss risks,
+            - contract/schema mismatches,
+            - regression and compatibility risks,
+            - read/modify/write and rollback behavior,
+            - stale/concurrency assumptions,
+            - batch isolation/counting/order behavior,
+            - validation gaps,
+            - documentation/tool-description accuracy,
+            - missing or misleading tests,
+            - and integration with existing repository conventions.
+
+            Read all prior findings, but verify them independently. Accepted limitations explicitly
+            documented in the approved design are not bugs merely because they are imperfect.
+
+            IMPORTANT:
+            - This session is REVIEW ONLY. Do not edit, write, commit, or push files.
+            - Find as many actionable issues as you can in this one pass rather than stopping after
+              the first plausible issue.
+            - Group findings by severity (P1/P2/P3).
+            - If there are no actionable findings, return status=clean and an empty findings array.
+            - If actionable findings exist and can be resolved within the approved design, return
+              status=findings with the complete consolidated list.
+            - If any necessary fix requires a product/design decision outside the approved contract,
+              return status=blocked and explain why.
+          claude_args: |
+            --model opus
+            --max-turns 40
+            --allowedTools Read,Bash
+            --json-schema '{"type":"object","properties":{"status":{"type":"string","enum":["clean","findings","blocked"]},"summary":{"type":"string"},"findings":{"type":"array","items":{"type":"object","properties":{"severity":{"type":"string","enum":["P1","P2","P3"]},"location":{"type":"string"},"problem":{"type":"string"},"recommended_fix":{"type":"string"}},"required":["severity","location","problem","recommended_fix"]}}},"required":["status","summary","findings"]}'
+
+      - name: Parse final audit result
+        id: final_audit_result
+        if: always() && steps.context.outputs.escalate == 'true'
+        env:
+          RAW_RESULT: ${{ steps.final_audit.outputs.structured_output }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "$RAW_RESULT" ]; then
+            echo "status=" >> "$GITHUB_OUTPUT"
+            echo "summary=" >> "$GITHUB_OUTPUT"
+            echo "findings=[]" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          STATUS="$(jq -r '.status // ""' <<<"$RAW_RESULT")"
+          SUMMARY="$(jq -r '.summary // ""' <<<"$RAW_RESULT")"
+          FINDINGS="$(jq -c '.findings // []' <<<"$RAW_RESULT")"
+
+          {
+            echo "status=$STATUS"
+            echo "summary<<EOF"
+            echo "$SUMMARY"
+            echo "EOF"
+            echo "findings=$FINDINGS"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Complete clean final audit
+        if: >-
+          steps.context.outputs.escalate == 'true' &&
+          steps.final_audit.outputs.conclusion == 'success' &&
+          steps.final_audit_result.outputs.status == 'clean'
+        env:
+          GH_TOKEN: ${{ secrets.AGENT_GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          PASSES: ${{ steps.context.outputs.passes }}
+          FINAL: complete
+          STAGE: Opus holistic final audit completed cleanly; automated review is finished.
+          DETAILS: ${{ steps.final_audit_result.outputs.summary }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash .github/scripts/agent-review-state.sh resolve-threads
+          bash .github/scripts/agent-review-state.sh set >/dev/null
+
+      - name: Report blocked final audit
+        if: >-
+          steps.context.outputs.escalate == 'true' &&
+          steps.final_audit.outputs.conclusion == 'success' &&
+          steps.final_audit_result.outputs.status == 'blocked'
+        env:
+          GH_TOKEN: ${{ secrets.AGENT_GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          PASSES: ${{ steps.context.outputs.passes }}
+          FINAL: blocked
+          STAGE: Opus final audit found a design/product decision that requires human input.
+          DETAILS: ${{ steps.final_audit_result.outputs.summary }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash .github/scripts/agent-review-state.sh set >/dev/null
+          gh pr comment "$PR_NUMBER" --body             "Final holistic audit stopped for human input.
+
+          **Reason:** ${{ steps.final_audit_result.outputs.summary }}"
+
+      - name: Apply consolidated final-audit fixes
+        if: >-
+          steps.context.outputs.escalate == 'true' &&
+          steps.final_audit.outputs.conclusion == 'success' &&
+          steps.final_audit_result.outputs.status == 'findings'
+        id: final_fix
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          allowed_bots: "chatgpt-codex-connector,chatgpt-codex-connector[bot]"
+          additional_permissions: |
+            actions: read
+          prompt: |
+            Apply the one-shot consolidated final-audit fixes for PR #${{ github.event.pull_request.number }}.
+
+            A separate Opus review session audited the COMPLETE PR and returned this consolidated
+            finding set:
+
+            ${{ steps.final_audit_result.outputs.findings }}
+
+            Audit summary:
+            ${{ steps.final_audit_result.outputs.summary }}
+
+            Before changing code, independently verify each finding against the current branch,
+            the originating issue/design contract, prior Codex threads, CLAUDE.md, AGENTS.md,
+            CONTRIBUTING.md, ARCHITECTURE.md, WORKFLOWS.md, and relevant tests.
+
+            Rules:
+            - Fix every valid finding in this one consolidated pass.
+            - Do not broaden the feature or perform opportunistic refactors.
+            - Preserve documented/accepted limitations unless the audit identified inaccurate
+              wording that must be corrected.
+            - If any finding is invalid, do not implement it; explain that in the summary.
+            - If a required fix conflicts with the approved design or needs a new product decision,
+              stop and return blocked instead of guessing.
+            - Run the complete validation suite after all fixes:
+              corepack enable
+              yarn install --immutable
+              yarn typecheck
+              yarn lint
+              yarn gen:docs:check
+              yarn test
+              yarn build
+            - If generated docs are stale, run yarn gen:docs and repeat all relevant checks.
+            - Commit and push all fixes to the existing PR branch.
+            - Do NOT request another Codex review. This is the terminal automated review stage.
+            - Never merge or push directly to main or agent-main.
+          claude_args: |
+            --model opus
+            --max-turns 45
+            --allowedTools Edit,Read,Write,Bash
+            --json-schema '{"type":"object","properties":{"status":{"type":"string","enum":["fixed","blocked"]},"summary":{"type":"string"},"validation":{"type":"string"}},"required":["status","summary","validation"]}'
+
+      - name: Parse consolidated final-fix result
+        id: final_fix_result
+        if: always() && steps.final_audit_result.outputs.status == 'findings'
+        env:
+          RAW_RESULT: ${{ steps.final_fix.outputs.structured_output }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "$RAW_RESULT" ]; then
+            echo "status=" >> "$GITHUB_OUTPUT"
+            echo "summary=" >> "$GITHUB_OUTPUT"
+            echo "validation=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          STATUS="$(jq -r '.status // ""' <<<"$RAW_RESULT")"
+          SUMMARY="$(jq -r '.summary // ""' <<<"$RAW_RESULT")"
+          VALIDATION="$(jq -r '.validation // ""' <<<"$RAW_RESULT")"
+
+          {
+            echo "status=$STATUS"
+            echo "summary<<EOF"
+            echo "$SUMMARY"
+            echo "EOF"
+            echo "validation<<EOF"
+            echo "$VALIDATION"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Complete consolidated final fix
+        if: >-
+          steps.final_audit_result.outputs.status == 'findings' &&
+          steps.final_fix.outputs.conclusion == 'success' &&
+          steps.final_fix_result.outputs.status == 'fixed'
+        env:
+          GH_TOKEN: ${{ secrets.AGENT_GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          PASSES: ${{ steps.context.outputs.passes }}
+          FINAL: complete
+          STAGE: Opus final audit and consolidated remediation complete; automated review is finished.
+          AUDIT_SUMMARY: ${{ steps.final_audit_result.outputs.summary }}
+          FIX_SUMMARY: ${{ steps.final_fix_result.outputs.summary }}
+          VALIDATION: ${{ steps.final_fix_result.outputs.validation }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash .github/scripts/agent-review-state.sh resolve-threads
+          DETAILS="**Audit:** $AUDIT_SUMMARY
+
+          **Final fix:** $FIX_SUMMARY
+
+          **Validation:** $VALIDATION
+
+          No further automated review will run. CI and human acceptance/live testing are the final gates."
+          export DETAILS
+          bash .github/scripts/agent-review-state.sh set >/dev/null
+
+      - name: Report blocked consolidated final fix
+        if: >-
+          steps.final_audit_result.outputs.status == 'findings' &&
+          steps.final_fix.outputs.conclusion == 'success' &&
+          steps.final_fix_result.outputs.status == 'blocked'
+        env:
+          GH_TOKEN: ${{ secrets.AGENT_GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          PASSES: ${{ steps.context.outputs.passes }}
+          FINAL: blocked
+          STAGE: Consolidated final remediation needs human input.
+          SUMMARY: ${{ steps.final_fix_result.outputs.summary }}
+          VALIDATION: ${{ steps.final_fix_result.outputs.validation }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          DETAILS="**Reason:** $SUMMARY
+
+          **Validation:** $VALIDATION"
+          export DETAILS
+          bash .github/scripts/agent-review-state.sh set >/dev/null
+          gh pr comment "$PR_NUMBER" --body             "Consolidated final remediation stopped for human input.
+
+          **Reason:** $SUMMARY
+
+          **Validation:** $VALIDATION"
