@@ -529,7 +529,10 @@ async function writeVerifiedIngredients(slug: string, plan: IngredientPlan): Pro
   }
 
   const originalIngredient = Array.isArray(original.recipeIngredient) ? original.recipeIngredient : [];
-  const rollbackIngredient = buildRollbackIngredients(ingredients, originalIngredient);
+  // Delta plans add/remove rows, so final-list positions don't line up with the original rows;
+  // restore the snapshot as-is rather than copying referenceIds by index.
+  const rollbackIngredient =
+    plan.kind === 'replace' ? buildRollbackIngredients(ingredients, originalIngredient) : originalIngredient;
   try {
     await recipesApi.patchRecipe(slug, { recipeIngredient: rollbackIngredient });
     requestCount += 1;

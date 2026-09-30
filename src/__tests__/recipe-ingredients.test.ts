@@ -1413,3 +1413,23 @@ describe('updateRecipeIngredients — delta form', () => {
     expect(mockPatchRecipe).toHaveBeenCalledTimes(2);
   });
 });
+
+describe('updateRecipeIngredients — delta rollback', () => {
+  it('restores the original snapshot unchanged when a delta removal fails verification', async () => {
+    const original = [
+      { referenceId: 'ref-a', note: 'a' },
+      { referenceId: 'ref-b', note: 'b' },
+      { referenceId: 'ref-c', note: 'c' },
+    ];
+    mockGetRecipe.mockResolvedValue({ slug: 'r', recipeIngredient: original.map((r) => ({ ...r })) });
+    // Write returns the wrong row count -> verification fails; rollback succeeds.
+    mockPatchRecipe.mockResolvedValueOnce({ recipeIngredient: [] }).mockResolvedValueOnce({});
+
+    await expect(
+      updateRecipeIngredients('r', { removeIngredientReferenceIds: ['ref-a'] }),
+    ).rejects.toThrow(IngredientVerificationError);
+
+    expect(mockPatchRecipe).toHaveBeenCalledTimes(2);
+    expect(mockPatchRecipe.mock.calls[1][1]).toEqual({ recipeIngredient: original });
+  });
+});
