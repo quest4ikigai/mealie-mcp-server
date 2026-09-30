@@ -212,6 +212,25 @@ jobs:
 
           **Validation:** $VALIDATION"
 
+      - name: Reset review cycle after owner-requested fix
+        if: >-
+          steps.pr.outputs.eligible == 'true' &&
+          steps.claude.outputs.conclusion == 'success' &&
+          steps.claude_result.outputs.status == 'fixed'
+        env:
+          GH_TOKEN: ${{ secrets.AGENT_GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+          REPO: ${{ github.repository }}
+          MAX_REMEDIATION_PASSES: 3
+          PASSES: 0
+          FINAL: not_started
+          STAGE: Owner-requested fix complete; requesting Codex review.
+          DETAILS: A deliberate /agent-fix starts a fresh automated remediation budget.
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash .github/scripts/agent-review-state.sh set >/dev/null
+
       - name: Request Codex review and wait for result
         id: codex
         if: >-
@@ -222,67 +241,53 @@ jobs:
           GH_TOKEN: ${{ secrets.AGENT_GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.issue.number }}
           REPO: ${{ github.repository }}
+          MAX_REMEDIATION_PASSES: 3
         shell: bash
         run: |
           set -euo pipefail
 
-          count_codex_reviews() {
-            gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/reviews"               --jq '.[] | select(.user.login | startswith("chatgpt-codex-connector")) | .id'               | wc -l               | tr -d ' '
-          }
+          REQUEST_OUTPUT="$(bash .github/scripts/agent-review-state.sh request human-fix)"
+          REQUEST_COMMENT_ID="$(sed -n 's/^request_comment_id=//p' <<<"$REQUEST_OUTPUT")"
+          BASELINE="$(sed -n 's/^baseline=//p' <<<"$REQUEST_OUTPUT")"
 
-          BASELINE="$(count_codex_reviews)"
-          REQUEST_COMMENT_ID="$(
-            gh api               -X POST               "repos/$REPO/issues/$PR_NUMBER/comments"               -f body='@codex review'               --jq '.id'
-          )"
+          PASSES=0 \
+          FINAL=not_started \
+          STAGE="Codex review running after owner-requested fix." \
+          DETAILS="Waiting on the independent review of commit $(git rev-parse --short HEAD)." \
+            bash .github/scripts/agent-review-state.sh set >/dev/null
 
-          DEADLINE=$((SECONDS + 900))
-          while [ "$SECONDS" -lt "$DEADLINE" ]; do
-            CURRENT="$(count_codex_reviews)"
-            if [ "$CURRENT" -gt "$BASELINE" ]; then
-              echo "result=findings" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-
-            CLEAN_REACTION="$(
-              gh api --paginate                 -H "Accept: application/vnd.github+json"                 "repos/$REPO/issues/comments/$REQUEST_COMMENT_ID/reactions"                 --jq '.[] | select((.user.login | startswith("chatgpt-codex-connector")) and .content == "+1") | .id'                 | head -n 1
-            )"
-
-            CLEAN_COMMENT="$(
-              gh api --paginate "repos/$REPO/issues/$PR_NUMBER/comments"                 | jq -r --argjson request "$REQUEST_COMMENT_ID"                   '.[] | select(.id > $request) | select(.user.login | startswith("chatgpt-codex-connector")) | select(.body | contains("find any major issues")) | .id'                 | head -n 1
-            )"
-
-            if [ -n "$CLEAN_REACTION" ] || [ -n "$CLEAN_COMMENT" ]; then
-              echo "result=clean" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-
-            sleep 15
-          done
-
-          echo "result=pending" >> "$GITHUB_OUTPUT"
+          RESULT="$(bash .github/scripts/agent-review-state.sh wait "$REQUEST_COMMENT_ID" "$BASELINE")"
+          echo "result=$RESULT" >> "$GITHUB_OUTPUT"
 
       - name: Report clean review
         if: steps.codex.outputs.result == 'clean'
         env:
           GH_TOKEN: ${{ secrets.AGENT_GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.issue.number }}
-          SUMMARY: ${{ steps.claude_result.outputs.summary }}
-          VALIDATION: ${{ steps.claude_result.outputs.validation }}
+          REPO: ${{ github.repository }}
+          MAX_REMEDIATION_PASSES: 3
+          PASSES: 0
+          FINAL: not_started
+          STAGE: Codex review completed cleanly after owner-requested fix.
+          DETAILS: CI still needs to pass before human acceptance and live testing.
         shell: bash
         run: |
-          gh pr comment "$PR_NUMBER" --body             "Owner-requested /agent-fix remediation completed and Codex returned no actionable findings.
-
-          **Claude summary:** $SUMMARY
-
-          **Validation:** $VALIDATION
-
-          CI still needs to pass before human acceptance."
+          set -euo pipefail
+          bash .github/scripts/agent-review-state.sh set >/dev/null
 
       - name: Report pending review
         if: steps.codex.outputs.result == 'pending'
         env:
           GH_TOKEN: ${{ secrets.AGENT_GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.issue.number }}
+          REPO: ${{ github.repository }}
+          MAX_REMEDIATION_PASSES: 3
+          PASSES: 0
+          FINAL: not_started
+          STAGE: Codex review is still running beyond the 15-minute monitor window.
+          DETAILS: The review can still finish later; submitted findings will enter the normal remediation workflow.
         shell: bash
         run: |
-          gh pr comment "$PR_NUMBER" --body             "Owner-requested /agent-fix remediation completed. Codex review was requested but did not finish within the 15-minute monitoring window. Later Codex findings will still trigger the normal remediation workflow."
+          set -euo pipefail
+          bash .github/scripts/agent-review-state.sh set >/dev/null
+
