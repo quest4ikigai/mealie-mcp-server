@@ -253,9 +253,8 @@ export async function buildTaxonomyPatch(
     for (const [config, outcomeKey, patchKey] of configs) {
       const result = await buildCollectionOutcome(config, mode, createMissing);
       outcome[outcomeKey] = result;
-      const isDelta = config.replace === undefined;
-      // Delta no-ops skip the write; legacy calls keep writing as before.
-      if (!isDelta || result.added.length > 0 || result.removed.length > 0) {
+      // Unchanged collections (legacy or delta) are never written.
+      if (result.added.length > 0 || result.removed.length > 0) {
         patchFields[patchKey] = result.final.map(toApiPayloadItem);
       }
     }
