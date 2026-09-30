@@ -4,6 +4,7 @@ import * as recipesApi from '../api/recipes.js';
 import { buildTaxonomyPatch, updateRecipeTaxonomy, updateRecipeTaxonomyBatch } from '../lib/recipe-taxonomy.js';
 import { updateRecipeTools, updateRecipeToolsBatch, RECIPE_TOOLS_BATCH_MAX_SIZE } from '../lib/recipe-tools.js';
 import { resolveTaxonomyFilter } from '../lib/taxonomy-resolution.js';
+import { setRecipeImage } from '../lib/recipe-image.js';
 import { findRecipesForIngredients } from '../lib/find-recipes-for-ingredients.js';
 import {
   getRecipesForClassification,
@@ -1035,6 +1036,25 @@ export function registerRecipeTools(server: McpServer) {
     async ({ slug }) => {
       try {
         const result = await recipesApi.updateRecipeLastMade(slug);
+        return successResponse(result);
+      } catch (error) {
+        return errorResponse(error);
+      }
+    },
+  );
+
+  // @endpoints PUT /api/recipes/{slug}/image, DELETE /api/recipes/{slug}/image
+  server.tool(
+    'set_recipe_image',
+    'Sets, replaces, or deletes a recipe\'s image. Pass `imageBase64` as base64-encoded PNG, JPEG, WebP, or GIF data (max 10 MB; a data: URI prefix is accepted) to upload or replace the image, or pass `null` to delete the existing image. Input is validated before anything is sent to Mealie, and no other recipe fields are touched. `extension` is optional; the format is detected from the data, and a mismatching extension is rejected. To set an image from a URL instead, use `set_recipe_image_from_url`.',
+    {
+      slug: z.string(),
+      imageBase64: z.string().nullable().describe('Base64-encoded image data to upload, or null to delete the recipe image.'),
+      extension: z.string().optional().describe('Optional image extension (png, jpg, jpeg, webp, gif); must match the data.'),
+    },
+    async ({ slug, imageBase64, extension }) => {
+      try {
+        const result = await setRecipeImage(slug, imageBase64, extension);
         return successResponse(result);
       } catch (error) {
         return errorResponse(error);
