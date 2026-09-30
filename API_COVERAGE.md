@@ -58,7 +58,8 @@
   Records the current timestamp as the recipe\
 
 - `patch_recipe` — GET /api/recipes/{slug}, PATCH /api/recipes/{slug}
-  Partially updates a recipe. Also accepts optional categories/tags/taxonomyMode/createMissing for taxonomy assignment. 
+  Partially updates a recipe. Also accepts optional categories/tags/taxonomyMode/createMissing for taxonomy assignment. Unchanged Category/Tag collections are never written; if taxonomy is the only thing requested and nothing changes, no PATCH is issued and the current recipe is returned with taxonomyChanges.
+  Params: `slug`, `name`, `description`, `recipeYield`, `totalTime`, `categories`, `tags`, `taxonomyMode`, `createMissing`
 
 - `set_recipe_image_from_url` — POST /api/recipes/{slug}/image
   Sets a recipe\

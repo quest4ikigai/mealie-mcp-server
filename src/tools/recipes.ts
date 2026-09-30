@@ -520,9 +520,7 @@ export function registerRecipeTools(server: McpServer) {
   // @endpoints GET /api/recipes/{slug}, PATCH /api/recipes/{slug}
   server.tool(
     'patch_recipe',
-    'Partially updates a recipe. Also accepts optional categories/tags/taxonomyMode/createMissing for taxonomy assignment. ' +
-      'Unchanged Category/Tag collections are never written; if taxonomy is the only thing requested and nothing ' +
-      'changes, no PATCH is issued and the current recipe is returned with taxonomyChanges.',
+    'Partially updates a recipe. Also accepts optional categories/tags/taxonomyMode/createMissing for taxonomy assignment. Unchanged Category/Tag collections are never written; if taxonomy is the only thing requested and nothing changes, no PATCH is issued and the current recipe is returned with taxonomyChanges.',
     {
       slug: z.string(),
       name: z.string().optional(),
