@@ -248,7 +248,7 @@ const expectedUpdatedAtSchema = z
   .min(1)
   .describe(
     'The exact opaque updatedAt from the get_recipe_detailed read whose instruction indexes you are using. Pass it ' +
-      'back unchanged. A mismatch means the recipe changed: the call fails before any write.',
+      'back unchanged. A mismatch means the recipe changed since that read: the call fails before any write (a stale-snapshot guard, not an atomic conditional write).',
   );
 
 const conciseFields = [
@@ -809,8 +809,10 @@ export function registerRecipeTools(server: McpServer) {
       'PATCHing only recipeInstructions. Mealie instruction IDs are ephemeral — regenerated on every recipe write — ' +
       'so they are never accepted or valid as identity and must not be saved. Instead: call get_recipe_detailed ' +
       'first, pass that snapshot\'s exact updatedAt as expectedUpdatedAt, and address instructions by zero-based ' +
-      'index in that snapshot. If the recipe changed since, the call fails as stale before any write (re-read and ' +
-      'retry) rather than overwriting newer changes. Two mutually exclusive forms: delta ' +
+      'index in that snapshot. expectedUpdatedAt guards against editing from a stale snapshot: if the recipe has already ' +
+      'changed when the tool reads it for mutation, the call fails before writing and the caller must re-read and ' +
+      'retry. Mealie does not provide conditional recipe writes, so a concurrent edit occurring in the narrow ' +
+      'interval between that validation read and the PATCH cannot be detected before the write. Two mutually exclusive forms: delta ' +
       '(addInstructions/updateInstructions/removeInstructionIndexes — focused edits, all indexes and anchors ' +
       'refer to the original snapshot) or instructions (complete ordered replacement — use for substantial ' +
       'rebuilds/reordering; [] clears all). ingredientReferenceIds must be referenceIds of the recipe\'s current ' +

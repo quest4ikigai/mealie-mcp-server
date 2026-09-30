@@ -401,7 +401,7 @@ A failed entry instead looks like `{ "slug": "...", "success": false, "error": {
 
 1. Call `get_recipe_detailed` and note the recipe's exact `updatedAt`.
 2. Address instructions by **zero-based index in that snapshot**, and pass the `updatedAt` back unchanged as `expectedUpdatedAt`.
-3. The tool GETs the recipe and compares `updatedAt`. A mismatch fails the call as stale **before any write** — re-read and retry from the new snapshot. Newer recipe changes are never overwritten.
+3. The tool GETs the recipe and compares `updatedAt`. A mismatch fails the call as stale **before any write** — re-read and retry from the new snapshot. Changes already present when the mutation begins are detected through `expectedUpdatedAt` and cause a stale-write failure. Because Mealie does not expose an atomic conditional PATCH, there remains a small race window if another client modifies the same recipe between the tool's validation GET and PATCH.
 
 Two mutually exclusive forms:
 
