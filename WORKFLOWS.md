@@ -413,6 +413,8 @@ Two mutually exclusive forms:
 
 `ingredientReferenceIds` are the stable `referenceId`s from the recipe's `recipeIngredient`. Every explicitly supplied id must be a UUID, unique within the instruction, and present on the current recipe; otherwise the whole request fails before any write. Untouched instructions, and updated instructions that omit `ingredientReferenceIds`, keep their stored references exactly — including dangling ones; nothing is cleaned up opportunistically.
 
+**Legacy/unpinned ingredients.** Some older Mealie rows have a NULL `reference_id`, so Mealie synthesizes a different UUID on every read; linking such an ingredient fails validation because its id never matches the current recipe. This affects only those ingredients. `update_recipe_instructions` never pins ids itself. Call `update_recipe_ingredients` in its complete-replacement form with the recipe's full current ingredient collection, explicitly preserving/supplying a `referenceId` for every continuing row, then re-read the recipe (the ingredient write changes `updatedAt`) and retry the instruction update with the new `updatedAt` and `referenceId`s.
+
 ```json
 {
   "slug": "chicken-shawarma",

@@ -203,6 +203,18 @@ describe('ingredient references', () => {
     }
     expect(mockPatch).not.toHaveBeenCalled();
   });
+
+  it('points an unknown id at pinning via update_recipe_ingredients complete replacement', async () => {
+    const err = updateRecipeInstructions('r', {
+      expectedUpdatedAt: TS,
+      updateInstructions: [{ index: 0, ingredientReferenceIds: [DANGLING] }],
+    });
+    await expect(err).rejects.toThrow(/NULL `?reference_id`?/);
+    await expect(err).rejects.toThrow(/complete-replacement form/);
+    await expect(err).rejects.toThrow(/full current ingredient collection/);
+    await expect(err).rejects.toThrow(/retry update_recipe_instructions using the newly returned updatedAt/);
+    expect(mockPatch).not.toHaveBeenCalled();
+  });
 });
 
 describe('replacement form', () => {

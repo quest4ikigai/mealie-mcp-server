@@ -209,10 +209,13 @@ function validateIngredientRefs(ids: string[], known: Set<string>, what: string,
     seen.add(key);
     if (!known.has(key)) {
       problems.push(
-        `${what}: ingredientReferenceId '${id}' does not exist on the recipe's current ingredients. Re-read the ` +
-          'recipe with get_recipe_detailed and use its current referenceIds. If a re-read keeps returning ' +
-          'different ids for that ingredient, Mealie has never stored its referenceId; pin it first with ' +
-          'update_recipe_ingredients (complete replacement, supplying a referenceId), then re-read.',
+        `${what}: ingredientReferenceId '${id}' does not exist on the recipe's current ingredients. If this ID ` +
+          'came from the guarded recipe snapshot, the ingredient may have no durably stored referenceId: older ' +
+          'Mealie rows can have a NULL reference_id, causing Mealie to synthesize a different UUID on every read. ' +
+          'Pin the ingredient identities with update_recipe_ingredients using the complete-replacement form: send ' +
+          "the recipe's full current ingredient collection and explicitly preserve/supply a referenceId for every " +
+          'continuing row. Then re-read the recipe and retry update_recipe_instructions using the newly returned ' +
+          'updatedAt and referenceIds.',
       );
       continue;
     }
