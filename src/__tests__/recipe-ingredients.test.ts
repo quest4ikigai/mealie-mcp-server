@@ -1310,3 +1310,146 @@ describe('updateRecipeIngredientsBatch — concurrency', () => {
     expect(result.results.map((r) => r.slug)).toEqual(['recipe-0', 'recipe-1', 'recipe-2', 'recipe-3', 'recipe-4']);
   });
 });
+
+
+describe('updateRecipeIngredients — delta form', () => {
+  const A = { referenceId: 'ref-a', note: 'a', quantity: 1, food: { id: 'f1', name: 'Flour' }, unit: null, disableAmount: true };
+  const B = { referenceId: 'ref-b', note: 'b' };
+  const C = { referenceId: 'ref-c', note: 'c' };
+
+  beforeEach(() => {
+    mockGetRecipe.mockImplementation((slug: string) =>
+      Promise.resolve({ slug, recipeIngredient: [A, B, C].map((r) => ({ ...r })) }),
+    );
+  });
+
+  function written(): Record<string, unknown>[] {
+    return mockPatchRecipe.mock.calls[0][1].recipeIngredient as Record<string, unknown>[];
+  }
+  const refs = () => written().map((r) => r.referenceId ?? r.note);
+
+  it('removes rows by referenceId and preserves the rest untouched', async () => {
+    await updateRecipeIngredients('r', { removeIngredientReferenceIds: ['ref-b'] });
+    expect(mockPatchRecipe).toHaveBeenCalledTimes(1);
+    expect(refs()).toEqual(['ref-a', 'ref-c']);
+    expect(written()[0]).toEqual(A);
+  });
+
+  it('updates only supplied fields in place, keeping unknown Mealie fields', async () => {
+    await updateRecipeIngredients('r', { updateIngredients: [{ referenceId: 'ref-a', note: 'new' }] });
+    expect(refs()).toEqual(['ref-a', 'ref-b', 'ref-c']);
+    expect(written()[0]).toMatchObject({ referenceId: 'ref-a', note: 'new', quantity: 1, disableAmount: true, food: { id: 'f1', name: 'Flour' } });
+  });
+
+  it('can set a section title via update and add', async () => {
+    await updateRecipeIngredients('r', {
+      updateIngredients: [{ referenceId: 'ref-b', title: 'Sauce' }],
+      addIngredients: [{ title: 'Topping', note: 'x', referenceId: 'ref-new' }],
+    });
+    expect(written()[1]).toMatchObject({ title: 'Sauce' });
+    expect(written()[3]).toMatchObject({ title: 'Topping', referenceId: 'ref-new' });
+  });
+
+  it('appends unanchored additions and honors insertAfter/insertBefore deterministically', async () => {
+    await updateRecipeIngredients('r', {
+      addIngredients: [
+        { note: 'end1' },
+        { note: 'after-a-1', insertAfterReferenceId: 'ref-a' },
+        { note: 'after-a-2', insertAfterReferenceId: 'ref-a' },
+        { note: 'before-a', insertBeforeReferenceId: 'ref-a' },
+        { note: 'end2' },
+      ],
+    });
+    expect(refs()).toEqual(['before-a', 'ref-a', 'after-a-1', 'after-a-2', 'ref-b', 'ref-c', 'end1', 'end2']);
+  });
+
+  it('runs the verified writer: a dropped food on an added row rolls back', async () => {
+    mockPatchRecipe.mockImplementationOnce((_s: string, d: Record<string, unknown>) =>
+      Promise.resolve({ recipeIngredient: (d.recipeIngredient as Record<string, unknown>[]).map((r) => ({ ...r, food: null })) }),
+    );
+    mockPatchRecipe.mockImplementationOnce((_s: string, d: Record<string, unknown>) => Promise.resolve({ ...d }));
+    await expect(
+      updateRecipeIngredients('r', { addIngredients: [{ note: 'n', foodId: '00000000-0000-0000-0000-000000000001', foodName: 'Salt' }] }),
+    ).rejects.toBeInstanceOf(IngredientVerificationError);
+    expect(mockPatchRecipe).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    ['unknown removal', { removeIngredientReferenceIds: ['nope'] }],
+    ['unknown update', { updateIngredients: [{ referenceId: 'nope', note: 'x' }] }],
+    ['duplicate removal', { removeIngredientReferenceIds: ['ref-a', 'ref-a'] }],
+    ['duplicate update', { updateIngredients: [{ referenceId: 'ref-a', note: 'x' }, { referenceId: 'ref-a', note: 'y' }] }],
+    ['update and remove same row', { updateIngredients: [{ referenceId: 'ref-a', note: 'x' }], removeIngredientReferenceIds: ['ref-a'] }],
+    ['empty update', { updateIngredients: [{ referenceId: 'ref-a' }] }],
+    ['add with existing referenceId', { addIngredients: [{ referenceId: 'ref-a', note: 'x' }] }],
+    ['duplicate added referenceId', { addIngredients: [{ referenceId: 'n1', note: 'x' }, { referenceId: 'n1', note: 'y' }] }],
+    ['unknown anchor', { addIngredients: [{ note: 'x', insertAfterReferenceId: 'nope' }] }],
+    ['anchor on removed row', { addIngredients: [{ note: 'x', insertAfterReferenceId: 'ref-a' }], removeIngredientReferenceIds: ['ref-a'] }],
+    ['both anchors', { addIngredients: [{ note: 'x', insertAfterReferenceId: 'ref-a', insertBeforeReferenceId: 'ref-b' }] }],
+    ['unpaired food in update', { updateIngredients: [{ referenceId: 'ref-a', foodId: 'f2' }] }],
+    ['blank foodName alone in update', { updateIngredients: [{ referenceId: 'ref-a', foodName: '' }] }],
+    ['blank food pair in update', { updateIngredients: [{ referenceId: 'ref-a', foodId: '', foodName: '' }] }],
+    ['whitespace unit pair in update', { updateIngredients: [{ referenceId: 'ref-a', unitId: ' ', unitName: '  ' }] }],
+    ['empty delta', { addIngredients: [] }],
+    ['replacement combined with delta', { ingredients: [], removeIngredientReferenceIds: ['ref-a'] }],
+    ['nothing at all', {}],
+  ])('rejects %s before any write', async (_name, input) => {
+    await expect(updateRecipeIngredients('r', input as never)).rejects.toThrow();
+    expect(mockPatchRecipe).not.toHaveBeenCalled();
+  });
+
+  it('explains that a blank food/unit pair cannot clear the association in a delta update', async () => {
+    await expect(
+      updateRecipeIngredients('r', { updateIngredients: [{ referenceId: 'ref-a', foodId: '', foodName: '' }] }),
+    ).rejects.toThrow(/must supply both foodId and foodName as non-blank values.*cannot be cleared with a delta update/);
+    await expect(
+      updateRecipeIngredients('r', { updateIngredients: [{ referenceId: 'ref-a', foodName: '' }] }),
+    ).rejects.toThrow(/must supply both foodId and foodName/);
+    expect(mockPatchRecipe).not.toHaveBeenCalled();
+  });
+
+  it('still replaces a food when the update supplies a non-blank pair', async () => {
+    await updateRecipeIngredients('r', {
+      updateIngredients: [{ referenceId: 'ref-a', foodId: '00000000-0000-0000-0000-000000000002', foodName: 'Sugar' }],
+    });
+    expect(written()[0]).toMatchObject({ referenceId: 'ref-a', food: { id: '00000000-0000-0000-0000-000000000002', name: 'Sugar' } });
+  });
+
+  it('keeps the legacy array and { ingredients } forms working', async () => {
+    await updateRecipeIngredients('r', [{ note: 'only' }]);
+    expect(written()).toEqual([{ food: null, unit: null, note: 'only' }]);
+  });
+
+  it('batch: delta entries are isolated per recipe and report the final count', async () => {
+    const result = await updateRecipeIngredientsBatch([
+      { slug: 'ok', removeIngredientReferenceIds: ['ref-a'] },
+      { slug: 'bad', removeIngredientReferenceIds: ['nope'] },
+      { slug: 'both', ingredients: [], addIngredients: [{ note: 'x' }] },
+      { slug: 'full', ingredients: [{ note: 'z' }] },
+    ]);
+    expect(result.succeededCount).toBe(2);
+    expect(result.results.map((r) => r.success)).toEqual([true, false, false, true]);
+    expect(result.results[0]).toMatchObject({ ingredientCount: 2 });
+    expect(mockPatchRecipe).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('updateRecipeIngredients — delta rollback', () => {
+  it('restores the original snapshot unchanged when a delta removal fails verification', async () => {
+    const original = [
+      { referenceId: 'ref-a', note: 'a' },
+      { referenceId: 'ref-b', note: 'b' },
+      { referenceId: 'ref-c', note: 'c' },
+    ];
+    mockGetRecipe.mockResolvedValue({ slug: 'r', recipeIngredient: original.map((r) => ({ ...r })) });
+    // Write returns the wrong row count -> verification fails; rollback succeeds.
+    mockPatchRecipe.mockResolvedValueOnce({ recipeIngredient: [] }).mockResolvedValueOnce({});
+
+    await expect(
+      updateRecipeIngredients('r', { removeIngredientReferenceIds: ['ref-a'] }),
+    ).rejects.toThrow(IngredientVerificationError);
+
+    expect(mockPatchRecipe).toHaveBeenCalledTimes(2);
+    expect(mockPatchRecipe.mock.calls[1][1]).toEqual({ recipeIngredient: original });
+  });
+});
