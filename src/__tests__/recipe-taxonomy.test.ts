@@ -23,6 +23,8 @@ import {
   updateRecipeTaxonomy,
   updateRecipeTaxonomyBatch,
   MissingTaxonomyItemsError,
+  TaxonomyValidationError,
+  UnknownRemovalTaxonomyError,
 } from '../lib/recipe-taxonomy.js';
 
 const DINNER = { id: 'cat-1', name: 'Dinner', slug: 'dinner', groupId: 'group-1' };
@@ -291,5 +293,107 @@ describe('updateRecipeTaxonomyBatch', () => {
     await updateRecipeTaxonomyBatch(updates);
 
     expect(maxInFlight).toBeLessThanOrEqual(5);
+  });
+});
+
+describe('delta taxonomy updates', () => {
+  it('adds and removes categories and tags in one request, preserving the rest', async () => {
+    mockGetRecipe.mockResolvedValue(baseRecipe({ recipeCategory: [DINNER], tags: [QUICK] }));
+
+    const result = await updateRecipeTaxonomy('chicken-shawarma', {
+      addCategories: ['dessert'],
+      removeCategories: ['Dinner'],
+      addTags: ['Dairy-Free'],
+    });
+
+    expect(result.categories?.final.map((c) => c.id)).toEqual(['cat-2']);
+    expect(result.categories?.added.map((c) => c.id)).toEqual(['cat-2']);
+    expect(result.categories?.removed.map((c) => c.id)).toEqual(['cat-1']);
+    expect(result.tags?.final.map((t) => t.id)).toEqual(['tag-1', 'tag-2']);
+    const [, patchData] = mockPatchRecipe.mock.calls[0];
+    expect(patchData).toHaveProperty('recipeCategory');
+    expect(patchData).toHaveProperty('tags');
+  });
+
+  it('skips the PATCH when the delta is a no-op', async () => {
+    const result = await updateRecipeTaxonomy('chicken-shawarma', {
+      addCategories: ['Dinner'],
+      removeTags: ['dairy-free'],
+    });
+
+    expect(result.categories?.added).toEqual([]);
+    expect(mockPatchRecipe).not.toHaveBeenCalled();
+  });
+
+  it('only writes the changed collection', async () => {
+    await updateRecipeTaxonomy('chicken-shawarma', { addCategories: ['Dessert'], addTags: ['Quick'] });
+    const [, patchData] = mockPatchRecipe.mock.calls[0];
+    expect(patchData).toHaveProperty('recipeCategory');
+    expect(patchData).not.toHaveProperty('tags');
+  });
+
+  it('creates missing additions only when createMissing is true', async () => {
+    await expect(updateRecipeTaxonomy('chicken-shawarma', { addTags: ['Spicy'] })).rejects.toThrow(
+      MissingTaxonomyItemsError,
+    );
+    expect(mockCreateTag).not.toHaveBeenCalled();
+
+    mockCreateTag.mockResolvedValue({ id: 'tag-3', name: 'Spicy', slug: 'spicy' });
+    const result = await updateRecipeTaxonomy('chicken-shawarma', { addTags: ['Spicy'], createMissing: true });
+    expect(result.tags?.created.map((t) => t.id)).toEqual(['tag-3']);
+    expect(result.tags?.final.map((t) => t.id)).toEqual(['tag-1', 'tag-3']);
+  });
+
+  it('never creates removals and creates nothing when validation fails', async () => {
+    await expect(
+      updateRecipeTaxonomy('chicken-shawarma', {
+        addTags: ['Spicy'],
+        removeTags: ['Nope'],
+        createMissing: true,
+      }),
+    ).rejects.toThrow(UnknownRemovalTaxonomyError);
+    expect(mockCreateTag).not.toHaveBeenCalled();
+    expect(mockPatchRecipe).not.toHaveBeenCalled();
+  });
+
+  it('rejects overlap between add and remove', async () => {
+    await expect(
+      updateRecipeTaxonomy('chicken-shawarma', { addTags: ['quick'], removeTags: ['Quick'] }),
+    ).rejects.toThrow(TaxonomyValidationError);
+    expect(mockPatchRecipe).not.toHaveBeenCalled();
+  });
+
+  it('rejects mixing legacy and delta forms for the same collection', async () => {
+    await expect(
+      updateRecipeTaxonomy('chicken-shawarma', { categories: ['Dinner'], addCategories: ['Dessert'] }),
+    ).rejects.toThrow(TaxonomyValidationError);
+  });
+
+  it('allows legacy for one collection and delta for the other', async () => {
+    const result = await updateRecipeTaxonomy('chicken-shawarma', {
+      categories: ['Dessert'],
+      mode: 'replace',
+      removeTags: ['Quick'],
+    });
+    expect(result.categories?.final.map((c) => c.id)).toEqual(['cat-2']);
+    expect(result.tags?.final).toEqual([]);
+  });
+
+  it('rejects mode with only delta fields', async () => {
+    await expect(
+      updateRecipeTaxonomy('chicken-shawarma', { addTags: ['Quick'], mode: 'replace' }),
+    ).rejects.toThrow(TaxonomyValidationError);
+  });
+
+  it('isolates per-recipe failures in the batch', async () => {
+    mockGetRecipe.mockImplementation((slug) =>
+      slug === 'bad' ? Promise.reject(new Error('not found')) : Promise.resolve(baseRecipe({ slug })),
+    );
+    const results = await updateRecipeTaxonomyBatch([
+      { slug: 'good', addCategories: ['Dessert'] },
+      { slug: 'bad', addCategories: ['Dessert'] },
+      { slug: 'conflict', addTags: ['Quick'], removeTags: ['Quick'] },
+    ]);
+    expect(results.map((r) => r.success)).toEqual([true, false, false]);
   });
 });

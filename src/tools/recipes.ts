@@ -56,6 +56,34 @@ const tagsParamSchema = z
       'Passing an empty array with mode "replace" clears all tags from the recipe — use with care.',
   );
 
+const taxonomyDeltaValueSchema = z.array(z.string().trim().min(1, 'Values must not be blank.'));
+
+function taxonomyDeltaFields() {
+  return {
+    addCategories: taxonomyDeltaValueSchema
+      .optional()
+      .describe(
+        'Delta form: categories to add (name, slug, or ID). Cannot be combined with categories. Unchanged ' +
+          'categories are preserved.',
+      ),
+    removeCategories: taxonomyDeltaValueSchema
+      .optional()
+      .describe(
+        'Delta form: categories to remove (name, slug, or ID). Must already exist — never created. Cannot be ' +
+          'combined with categories, and cannot overlap addCategories.',
+      ),
+    addTags: taxonomyDeltaValueSchema
+      .optional()
+      .describe('Delta form: tags to add (name, slug, or ID). Cannot be combined with tags.'),
+    removeTags: taxonomyDeltaValueSchema
+      .optional()
+      .describe(
+        'Delta form: tags to remove (name, slug, or ID). Must already exist — never created. Cannot be combined ' +
+          'with tags, and cannot overlap addTags.',
+      ),
+  };
+}
+
 const recipeIngredientInputSchema = z.object({
   quantity: z
     .number()
@@ -638,17 +666,22 @@ export function registerRecipeTools(server: McpServer) {
   server.tool(
     'update_recipe_taxonomy',
     'Updates a recipe\'s categories and/or tags. Resolves requested names/slugs/IDs against existing taxonomy, ' +
-      'optionally auto-creating missing values. Reads the recipe first to merge with existing taxonomy.',
+      'optionally auto-creating missing values. Reads the recipe first to merge with existing taxonomy. Per ' +
+      'collection, use either categories/tags (+ mode merge/replace) or the delta fields ' +
+      'addCategories/removeCategories/addTags/removeTags (current - remove + add, other assignments untouched); ' +
+      'additions and removals can be combined in one call. Removals must exist and are never created; ' +
+      'createMissing only applies to additions. Returns final/added/removed/created per collection.',
     {
       slug: z.string().describe('Slug of the recipe to update.'),
       categories: categoriesParamSchema.optional(),
       tags: tagsParamSchema.optional(),
+      ...taxonomyDeltaFields(),
       mode: taxonomyModeSchema.optional(),
       createMissing: createMissingSchema.optional(),
     },
-    async ({ slug, categories, tags, mode, createMissing }) => {
+    async ({ slug, ...input }) => {
       try {
-        const result = await updateRecipeTaxonomy(slug, { categories, tags, mode, createMissing });
+        const result = await updateRecipeTaxonomy(slug, input);
         return successResponse(result);
       } catch (error) {
         return errorResponse(error);
@@ -660,7 +693,8 @@ export function registerRecipeTools(server: McpServer) {
   server.tool(
     'update_recipe_taxonomy_batch',
     'Runs update_recipe_taxonomy for multiple recipes with bounded concurrency (5 at a time), returning a ' +
-      'success/error result per recipe.',
+      'success/error result per recipe. Each entry accepts the same legacy (categories/tags + mode) or delta ' +
+      '(addCategories/removeCategories/addTags/removeTags) fields.',
     {
       updates: z
         .array(
@@ -668,6 +702,7 @@ export function registerRecipeTools(server: McpServer) {
             slug: z.string().describe('Slug of the recipe to update.'),
             categories: categoriesParamSchema.optional(),
             tags: tagsParamSchema.optional(),
+            ...taxonomyDeltaFields(),
             mode: taxonomyModeSchema.optional(),
             createMissing: createMissingSchema.optional(),
           }),
