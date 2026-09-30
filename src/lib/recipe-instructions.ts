@@ -387,8 +387,8 @@ async function writeVerifiedInstructions(slug: string, input: RecipeInstructions
   try {
     const expectedUpdatedAt = checkExpectedUpdatedAt(input.expectedUpdatedAt);
     const plan = planFromInput(input);
-    original = await recipesApi.getRecipe(slug);
     requestCount += 1;
+    original = await recipesApi.getRecipe(slug);
     if (original.updatedAt !== expectedUpdatedAt) throw new StaleInstructionSnapshotError(slug, expectedUpdatedAt, original.updatedAt);
 
     const known = new Set(refIds(original.recipeIngredient));
@@ -400,8 +400,8 @@ async function writeVerifiedInstructions(slug: string, input: RecipeInstructions
       return { recipe: original, requestCount, instructionCount: desired.length, changed: false };
     }
 
-    updated = await recipesApi.patchRecipe(slug, { recipeInstructions: desired.map((d) => d.payload) });
     requestCount += 1;
+    updated = await recipesApi.patchRecipe(slug, { recipeInstructions: desired.map((d) => d.payload) });
   } catch (error) {
     attachRequestCount(error, requestCount);
     throw error;
@@ -415,13 +415,12 @@ async function writeVerifiedInstructions(slug: string, input: RecipeInstructions
 
   const originalInstructions = asRecordList(original.recipeInstructions);
   let rollbackFailure: string | null = null;
+  requestCount += 1;
   try {
     const restored = await recipesApi.patchRecipe(slug, { recipeInstructions: originalInstructions.map(withoutId) });
-    requestCount += 1;
     const mismatch = firstDifference(canonicalList(originalInstructions), canonicalList(restored.recipeInstructions));
     if (mismatch) rollbackFailure = `Mealie's response after rollback did not match the original instructions: ${mismatch}`;
   } catch (rollbackError) {
-    requestCount += 1;
     rollbackFailure = rollbackError instanceof Error ? rollbackError.message : String(rollbackError);
   }
 

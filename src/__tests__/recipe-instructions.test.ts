@@ -333,8 +333,8 @@ describe('updateRecipeInstructionsBatch', () => {
     expect(stale.success === false && stale.error.stale).toBe(true);
     const missing = result.results[3];
     expect(missing.success === false && missing.error.status).toBe(404);
-    // ok: GET+PATCH; stale/bad/noop: one GET each; the failed GET is not counted (as in the ingredient batch)
-    expect(result.apiRequestCount).toBe(5);
+    // ok: GET+PATCH; stale/bad/noop: one GET each; the rejected GET for 'missing' is still counted as an attempted request
+    expect(result.apiRequestCount).toBe(6);
     expect(mockPatch).toHaveBeenCalledTimes(1);
   });
 
