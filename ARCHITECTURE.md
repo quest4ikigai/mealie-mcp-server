@@ -107,5 +107,7 @@ The `"food present, unit absent, quantity positive"` heuristic behind `partial` 
 
 Dynamic REST path components must be encoded as individual path segments before request
 construction. Every runtime value interpolated into an API route (slugs, IDs) goes through
-`encodePathSegment()` in `src/api/client.ts`, which rejects blank, `.` and `..` values and
-applies `encodeURIComponent`. Query strings are built separately and are not encoded with it.
+`encodePathSegment()` in `src/api/client.ts`, which rejects blank, `.` and `..` values and any
+value containing `/` or `\`, then applies `encodeURIComponent`. Slashes are rejected rather than
+encoded because a reverse proxy that decodes and normalizes paths would turn `..%2F` back into a
+traversal; no Mealie ID or slug contains them. Query strings are built separately and are not encoded with it.

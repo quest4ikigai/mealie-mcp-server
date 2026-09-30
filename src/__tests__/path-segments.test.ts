@@ -12,16 +12,24 @@ import { deleteTag } from '../api/tags.js';
 import { deleteMealplan } from '../api/mealplans.js';
 import { deleteShoppingListItem } from '../api/shopping-lists.js';
 
+// Values that may appear in a segment and must be encoded as data within it.
 const payloads = [
-  '../../recipes/pancakes',
-  '../bar',
-  'foo/bar',
-  'foo\\bar',
-  '%2e%2e/%2e%2e/recipes/pancakes',
+  '..%2F..%2Frecipes%2Fpancakes',
+  '%2e%2e',
   '?x=y',
   '#fragment',
   'name with spaces',
   'unicode-✓',
+];
+
+// Values containing a path separator are rejected outright, never encoded.
+const separatorPayloads = [
+  '../../recipes/pancakes',
+  '../bar',
+  'foo/bar',
+  'foo\\bar',
+  '..\\..\\recipes',
+  '%2e%2e/%2e%2e/recipes/pancakes',
 ];
 
 describe('encodePathSegment', () => {
@@ -31,6 +39,10 @@ describe('encodePathSegment', () => {
     expect(out).not.toContain('\\');
     expect(out).not.toMatch(/[?#\s]/);
     expect(decodeURIComponent(out)).toBe(p);
+  });
+
+  it.each(separatorPayloads)('rejects %s because it contains a path separator', (p) => {
+    expect(() => encodePathSegment(p, 'toolId')).toThrow('Invalid toolId.');
   });
 
   it.each(['', '  ', '.', '..', ' .. '])('rejects %j', (v) => {
@@ -70,7 +82,7 @@ describe('requests handed to fetch', () => {
     expect((fetchMock.mock.calls[0][1] as RequestInit).method).toBe('DELETE');
   });
 
-  it.each(['.', '..', '', '  '])('blank/dot segment %j fails before fetch', async (v) => {
+  it.each(['.', '..', '', '  ', ...separatorPayloads])('blank/dot/separator segment %j fails before fetch', async (v) => {
     await expect(deleteTool(v)).rejects.toThrow();
     await expect(getRecipe(v)).rejects.toThrow('Invalid slug.');
     await expect(getFood(v)).rejects.toThrow();
@@ -82,9 +94,14 @@ describe('requests handed to fetch', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('recipe traversal payload cannot reach another route', async () => {
-    await getRecipe('../../organizers/tools/x');
-    expect(calledUrl()).toBe('http://mealie.test/api/recipes/..%2F..%2Forganizers%2Ftools%2Fx');
+  it('recipe traversal payload fails before fetch', async () => {
+    await expect(getRecipe('../../organizers/tools/x')).rejects.toThrow('Invalid slug.');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('pre-encoded traversal is double-encoded so a single decode cannot produce a separator', async () => {
+    await getRecipe('..%2F..%2Forganizers%2Ftools%2Fx');
+    expect(calledUrl()).toBe('http://mealie.test/api/recipes/..%252F..%252Forganizers%252Ftools%252Fx');
   });
 
   it('valid slugs and UUIDs pass through unchanged', async () => {
