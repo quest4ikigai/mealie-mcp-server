@@ -393,6 +393,42 @@ Each ingredient accepts `quantity`, `unitId`/`unitName`, `foodId`/`foodName`, `n
 
 A failed entry instead looks like `{ "slug": "...", "success": false, "error": { "message": "...", "status": 404 } }` — `status` is included whenever the failure came from a Mealie API error, so a transient `502` can be distinguished from a real `404`/`422` and retried on just that recipe.
 
+## Updating Recipe Instructions
+
+`update_recipe_instructions` (and `update_recipe_instructions_batch`) edit a recipe's instructions — `text`, `title` (section heading), `summary`, and the links from each instruction to recipe ingredients — PATCHing only `recipeInstructions`. Deciding the wording, sectioning, and which ingredients belong to each step is the calling model's job; the tool never infers links, matches, or creates ingredients.
+
+**Mealie's instruction IDs are ephemeral and are never a valid edit identity.** Mealie regenerates `recipeInstructions[].id` on every recipe write (see [Architecture](./ARCHITECTURE.md#recipeinstructionsid-is-regenerated-on-every-recipe-update)), so these tools never accept or return an ID as a mutation handle. Do not save them. Instead:
+
+1. Call `get_recipe_detailed` and note the recipe's exact `updatedAt`.
+2. Address instructions by **zero-based index in that snapshot**, and pass the `updatedAt` back unchanged as `expectedUpdatedAt`.
+3. The tool GETs the recipe and compares `updatedAt`. A mismatch fails the call as stale **before any write** — re-read and retry from the new snapshot. Changes already present when the mutation begins are detected through `expectedUpdatedAt` and cause a stale-write failure. Because Mealie does not expose an atomic conditional PATCH, there remains a small race window if another client modifies the same recipe between the tool's validation GET and PATCH.
+
+Two mutually exclusive forms:
+
+- **Delta** (focused edits) — `addInstructions`, `updateInstructions`, `removeInstructionIndexes`. All indexes and anchors refer to the original guarded snapshot (removals are not progressively renumbered).
+  - `updateInstructions`: `index` plus any of `text`/`title`/`summary`/`ingredientReferenceIds`. Omitted fields are preserved; `ingredientReferenceIds: []` clears the links; a non-empty array replaces them; existing `noteReferences` are always kept.
+  - `removeInstructionIndexes`: existing, unique indexes that are not also updated.
+  - `addInstructions`: `text` required; optional `title`, `summary`, `ingredientReferenceIds`, and at most one of `insertBeforeIndex`/`insertAfterIndex`. No anchor appends. Additions sharing an anchor keep input order; an anchor must exist and not be removed; opposite anchors that land in the same gap (e.g. `insertAfterIndex: 1` and `insertBeforeIndex: 2`) are rejected as ambiguous. There is no move operation.
+- **Complete replacement** — `instructions`, the full ordered list (`[]` clears all). Use it for substantial rebuilds and reordering. Each entry takes `text`, `title`, `summary`, `ingredientReferenceIds`, and an optional low-level `noteReferenceIds` pass-through (copy from the read) so replacement can stay lossless; omitting it means no note references.
+
+`ingredientReferenceIds` are the stable `referenceId`s from the recipe's `recipeIngredient`. Every explicitly supplied id must be a UUID, unique within the instruction, and present on the current recipe; otherwise the whole request fails before any write. Untouched instructions, and updated instructions that omit `ingredientReferenceIds`, keep their stored references exactly — including dangling ones; nothing is cleaned up opportunistically.
+
+**Legacy/unpinned ingredients.** Some older Mealie rows have a NULL `reference_id`, so Mealie synthesizes a different UUID on every read; linking such an ingredient fails validation because its id never matches the current recipe. This affects only those ingredients. `update_recipe_instructions` never pins ids itself. Call `update_recipe_ingredients` in its complete-replacement form with the recipe's full current ingredient collection, explicitly preserving/supplying a `referenceId` for every continuing row, then re-read the recipe (the ingredient write changes `updatedAt`) and retry the instruction update with the new `updatedAt` and `referenceId`s.
+
+```json
+{
+  "slug": "chicken-shawarma",
+  "expectedUpdatedAt": "<updatedAt from get_recipe_detailed>",
+  "updateInstructions": [{ "index": 1, "ingredientReferenceIds": ["<referenceId>"] }],
+  "addInstructions": [{ "text": "Rest 5 minutes.", "insertAfterIndex": 3 }],
+  "removeInstructionIndexes": [0]
+}
+```
+
+**Writes.** The tool builds the complete desired collection in memory and, if it differs canonically (text, title, summary, ingredient references, note references — never IDs) from the current one, persists it in one PATCH (one GET + one PATCH). If nothing would change, no PATCH is made and the current recipe is returned, so instruction IDs and `updatedAt` do not churn. After a write, the returned recipe is verified by the same canonical comparison; on mismatch the original instructions are restored best-effort and the call fails with a verification error reporting whether rollback succeeded (and the rollback error if not). A failed write plus rollback regenerates instruction IDs, possibly twice — expected; correctness is judged on content, order, and references.
+
+**Batch.** `update_recipe_instructions_batch` takes up to 25 entries, each with its own `slug`, `expectedUpdatedAt`, and one mutation form, runs 5 at a time, and returns `requestedCount`/`succeededCount`/`failedCount` and per-recipe `results` in input order. A stale token, invalid entry, API error, or verification failure only fails that entry (with its own rollback); there is no cross-recipe transaction. An empty batch, more than 25 entries, a blank slug, or a duplicate slug rejects the whole call before any write.
+
 ## Recipe Classification Workflow
 
 `get_recipes_for_classification` exists because the general-purpose batch tools (`get_recipes_batch`, `get_recipes_detailed_batch`) return the *full* recipe payload — nutrition, settings, assets, images, comments — for every recipe requested, fetched with unbounded concurrency. On any non-trivial recipe count that reliably produces HTTP 504s through the MCP transport, even at batch sizes as small as 8-9. This tool instead:
@@ -537,6 +573,6 @@ Most of this server's tools are deterministic primitives with no need for extra 
 
 Each section opens with contextual language (e.g. "When the user asks to add, create, import, or save a recipe in Mealie...") so it only shapes behavior when the request actually matches — not meal planning, taxonomy, or ordinary recipe lookups.
 
-**Current recipe-creation tool gaps the instructions are honest about, rather than working around:** `create_recipe`'s `instructions` parameter is the *only* way to set `recipeInstructions` — nothing updates them afterward, so instruction text must be finalized before that call; `patch_recipe` exposes one aggregate `totalTime` field, not separate prep/cook times; and no recipe tool has a dedicated source-URL field, so the instructions suggest `description` as the practical fallback rather than inventing a metadata field the schema doesn't have. `set_recipe_image_from_url` only works from a fetchable URL — there's no way to upload a local file or a pasted screenshot.
+**Current recipe-creation tool gaps the instructions are honest about, rather than working around:** `create_recipe`'s `instructions` parameter sets plain-text steps at creation; afterwards `update_recipe_instructions` edits them (titles, summaries, ingredient links) with index + `expectedUpdatedAt` guarding; `patch_recipe` exposes one aggregate `totalTime` field, not separate prep/cook times; and no recipe tool has a dedicated source-URL field, so the instructions suggest `description` as the practical fallback rather than inventing a metadata field the schema doesn't have. `set_recipe_image_from_url` only works from a fetchable URL — there's no way to upload a local file or a pasted screenshot.
 
 **A client that was already connected before this policy was added or changed will not see the update** — MCP instructions are only sent during `initialize`. Reconnect the MCP integration (or start a new conversation with the assistant, depending on the client) to pick up changes.

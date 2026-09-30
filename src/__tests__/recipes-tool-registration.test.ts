@@ -11,6 +11,8 @@ const EXISTING_RECIPE_TOOLS = [
   'create_recipe',
   'patch_recipe',
   'update_recipe_ingredients',
+  'update_recipe_instructions',
+  'update_recipe_instructions_batch',
   'update_recipe_taxonomy',
   'update_recipe_taxonomy_batch',
   'update_recipe_tools',

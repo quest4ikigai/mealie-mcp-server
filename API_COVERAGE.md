@@ -2,7 +2,7 @@
 
 | Category | Tools |
 |---|---|
-| Recipes | 20 |
+| Recipes | 22 |
 | Meal Plans | 6 |
 | Categories | 7 |
 | Tags | 7 |
@@ -10,9 +10,9 @@
 | Foods | 6 |
 | Units | 6 |
 | Tools | 6 |
-| **Total** | **71** |
+| **Total** | **73** |
 
-## Recipes Operations (20)
+## Recipes Operations (22)
 
 - `create_recipe` — POST /api/recipes, PUT /api/recipes/{slug}
   Creates a new recipe. Optionally sets ingredients and instructions on creation.
@@ -76,6 +76,14 @@
 
 - `update_recipe_ingredients_batch` — GET /api/recipes/{slug}, PATCH /api/recipes/{slug}
   Runs update_recipe_ingredients for multiple recipes with bounded concurrency (5 at a time). Use this once several recipes already have COMPLETE, resolved ingredient collections ready to persist — e.g. after batch-resolving food/unit concepts with get_food_matches/get_unit_matches across many recipes — to avoid one individual write call per recipe. Same low-level write semantics as the singular tool, applied independently per entry: each item's "ingredients" is that recipe's complete new recipeIngredient list (not a patch — any ingredient omitted is removed), foodId/unitId must already reference existing Mealie entities (this tool never looks up, matches, or creates foods/units), and referenceIds are preserved exactly as supplied. Same post-write integrity verification and best-effort rollback as the singular tool applies independently per recipe: a verification failure on one recipe restores only that recipe and is reported in its own result entry (error.rollbackSucceeded, plus error.rollbackError if the restore itself failed) — it never affects siblings. There is no cross-recipe transaction: recipes are processed independently, a failure on one (a 404/422/502 from Mealie, a local validation error like a mismatched foodId/foodName, or a verification failure) does not stop or roll back the others, and the response reports a success/failure result per recipe in the same order submitted. The whole call is rejected before any write starts only for a true request-shape problem — an empty batch, more than 25 recipes, a missing slug, or the same slug repeated in one call. The same recipeInstructions-id-regeneration caveat as update_recipe_ingredients applies to every recipe touched here (instruction content is preserved, only ids churn). Each entry uses either the complete-replacement form (ingredients) or the referenceId delta form (addIngredients/updateIngredients/removeIngredientReferenceIds) with the singular tool's semantics; an invalid or conflicting entry fails only its own result, before that recipe is written.
+  Params: `updates`
+
+- `update_recipe_instructions` — GET /api/recipes/{slug}, PATCH /api/recipes/{slug}
+  Edits a recipe's instructions (text, title, summary, and links to ingredients via ingredientReferenceIds), PATCHing only recipeInstructions. Mealie instruction IDs are ephemeral — regenerated on every recipe write — so they are never accepted or valid as identity and must not be saved. Instead: call get_recipe_detailed first, pass that snapshot's exact updatedAt as expectedUpdatedAt, and address instructions by zero-based index in that snapshot. expectedUpdatedAt guards against editing from a stale snapshot: if the recipe has already changed when the tool reads it for mutation, the call fails before writing and the caller must re-read and retry. Mealie does not provide conditional recipe writes, so a concurrent edit occurring in the narrow interval between that validation read and the PATCH cannot be detected before the write. Two mutually exclusive forms: delta (addInstructions/updateInstructions/removeInstructionIndexes — focused edits, all indexes and anchors refer to the original snapshot) or instructions (complete ordered replacement — use for substantial rebuilds/reordering; [] clears all). ingredientReferenceIds must be referenceIds of the recipe's current ingredients (unknown, malformed or duplicate ids are rejected before any write; Mealie regenerates the id on every read for a legacy/unpinned ingredient that never had one stored — this affects only such ingredients, not every ingredient. To pin them, use update_recipe_ingredients complete replacement with the full ingredient collection, explicitly supplying a referenceId for every continuing row; then re-read the recipe before retrying, because the ingredient write changes the recipe snapshot and its updatedAt); the MCP never infers links — deciding wording, sectioning and which ingredients belong to a step is your job. Delta updates preserve omitted fields, untouched instructions and existing noteReferences exactly (existing dangling ingredient references are not cleaned up). A change that leaves instructions identical skips the write and returns the current recipe. After a write the returned recipe is verified by content (text/title/summary/ingredient and note references, ignoring ids); on mismatch the original instructions are restored best-effort and the call fails, reporting whether rollback succeeded (ids are regenerated by each write and rollback).
+  Params: `slug`, `expectedUpdatedAt`, `instructions`, `addInstructions`, `updateInstructions`, `removeInstructionIndexes`
+
+- `update_recipe_instructions_batch` — GET /api/recipes/{slug}, PATCH /api/recipes/{slug}
+  Runs update_recipe_instructions for multiple recipes with bounded concurrency (5 at a time). Each entry has its own slug, its own expectedUpdatedAt (exact updatedAt from that recipe's get_recipe_detailed) and exactly one of the replacement form (instructions) or delta form (addInstructions/updateInstructions/removeInstructionIndexes), with the singular tool's semantics. Mealie instruction IDs are ephemeral and never valid identity. Each recipe is validated, written, verified and rolled back independently: a stale expectedUpdatedAt, invalid entry, API error or verification failure fails only that entry. Results come back in input order with requestedCount/succeededCount/failedCount; there is no cross-recipe transaction. The whole call is rejected before any write for an empty batch, more than 25 entries, a missing slug, or a repeated slug.
   Params: `updates`
 
 - `update_recipe_taxonomy` — GET /api/organizers/categories, POST /api/organizers/categories, GET /api/organizers/tags, POST /api/organizers/tags, GET /api/recipes/{slug}, PATCH /api/recipes/{slug}

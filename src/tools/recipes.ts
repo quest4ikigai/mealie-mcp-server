@@ -17,6 +17,11 @@ import {
   RECIPE_INGREDIENTS_BATCH_MAX_SIZE,
 } from '../lib/recipe-ingredients.js';
 import {
+  updateRecipeInstructions,
+  updateRecipeInstructionsBatch,
+  RECIPE_INSTRUCTIONS_BATCH_MAX_SIZE,
+} from '../lib/recipe-instructions.js';
+import {
   getRecipesForIngredientParsing,
   INGREDIENT_PARSING_DEFAULT_LIMIT,
   INGREDIENT_PARSING_MAX_LIMIT,
@@ -177,6 +182,74 @@ function recipeIngredientDeltaFields() {
       ),
   };
 }
+
+const instructionRefIdsSchema = z.array(z.string().uuid());
+
+const recipeInstructionInputSchema = z.object({
+  text: z.string().min(1).describe('Instruction text.'),
+  title: z.string().nullable().optional().describe('Instruction section title; omit or null for none.'),
+  summary: z.string().nullable().optional().describe('Instruction summary; omit or null for none.'),
+  ingredientReferenceIds: instructionRefIdsSchema
+    .optional()
+    .describe('referenceIds of the recipe ingredients this instruction uses (from get_recipe_detailed recipeIngredient).'),
+  noteReferenceIds: instructionRefIdsSchema
+    .optional()
+    .describe(
+      'Low-level preservation field: noteReferences (referenceId) read from the recipe, passed back unchanged so a ' +
+        'complete replacement does not drop them. Omit for none.',
+    ),
+});
+
+function recipeInstructionDeltaFields() {
+  return {
+    addInstructions: z
+      .array(
+        z.object({
+          text: z.string().min(1).describe('Instruction text (required).'),
+          title: z.string().nullable().optional(),
+          summary: z.string().nullable().optional(),
+          ingredientReferenceIds: instructionRefIdsSchema.optional(),
+          insertBeforeIndex: z.number().int().min(0).optional().describe('Insert before the instruction at this index of the guarded snapshot. Not with insertAfterIndex.'),
+          insertAfterIndex: z.number().int().min(0).optional().describe('Insert after the instruction at this index of the guarded snapshot. Not with insertBeforeIndex.'),
+        }),
+      )
+      .optional()
+      .describe(
+        'Delta form: instructions to add. No anchor appends to the end in the given order; anchors refer to the ' +
+          'guarded original snapshot, must exist and must not be removed; additions sharing an anchor keep input ' +
+          'order; opposite anchors targeting the same gap are rejected as ambiguous. Cannot be combined with instructions.',
+      ),
+    updateInstructions: z
+      .array(
+        z.object({
+          index: z.number().int().min(0).describe('Zero-based index in the guarded snapshot.'),
+          text: z.string().min(1).optional(),
+          title: z.string().nullable().optional(),
+          summary: z.string().nullable().optional(),
+          ingredientReferenceIds: instructionRefIdsSchema
+            .optional()
+            .describe('Replaces this instruction\'s complete ingredient links; [] clears them; omit to keep them.'),
+        }),
+      )
+      .optional()
+      .describe(
+        'Delta form: partial updates by snapshot index. Only supplied fields change; omitted fields and ' +
+          'noteReferences are preserved. An index may appear once and cannot also be removed.',
+      ),
+    removeInstructionIndexes: z
+      .array(z.number().int().min(0))
+      .optional()
+      .describe('Delta form: zero-based snapshot indexes to remove (no duplicates, no overlap with updates).'),
+  };
+}
+
+const expectedUpdatedAtSchema = z
+  .string()
+  .min(1)
+  .describe(
+    'The exact opaque updatedAt from the get_recipe_detailed read whose instruction indexes you are using. Pass it ' +
+      'back unchanged. A mismatch means the recipe changed since that read: the call fails before any write (a stale-snapshot guard, not an atomic conditional write).',
+  );
 
 const conciseFields = [
   'name',
@@ -722,6 +795,91 @@ export function registerRecipeTools(server: McpServer) {
     async ({ updates }) => {
       try {
         const result = await updateRecipeIngredientsBatch(updates);
+        return successResponse(result);
+      } catch (error) {
+        return errorResponse(error);
+      }
+    },
+  );
+
+  // @endpoints GET /api/recipes/{slug}, PATCH /api/recipes/{slug}
+  server.tool(
+    'update_recipe_instructions',
+    'Edits a recipe\'s instructions (text, title, summary, and links to ingredients via ingredientReferenceIds), ' +
+      'PATCHing only recipeInstructions. Mealie instruction IDs are ephemeral — regenerated on every recipe write — ' +
+      'so they are never accepted or valid as identity and must not be saved. Instead: call get_recipe_detailed ' +
+      'first, pass that snapshot\'s exact updatedAt as expectedUpdatedAt, and address instructions by zero-based ' +
+      'index in that snapshot. expectedUpdatedAt guards against editing from a stale snapshot: if the recipe has already ' +
+      'changed when the tool reads it for mutation, the call fails before writing and the caller must re-read and ' +
+      'retry. Mealie does not provide conditional recipe writes, so a concurrent edit occurring in the narrow ' +
+      'interval between that validation read and the PATCH cannot be detected before the write. Two mutually exclusive forms: delta ' +
+      '(addInstructions/updateInstructions/removeInstructionIndexes — focused edits, all indexes and anchors ' +
+      'refer to the original snapshot) or instructions (complete ordered replacement — use for substantial ' +
+      'rebuilds/reordering; [] clears all). ingredientReferenceIds must be referenceIds of the recipe\'s current ' +
+      'ingredients (unknown, malformed or duplicate ids are rejected before any write; Mealie regenerates the id on every ' +
+      'read for a legacy/unpinned ingredient that never had one stored — this affects only such ingredients, not ' +
+      'every ingredient. To pin them, use update_recipe_ingredients complete replacement with the full ingredient ' +
+      'collection, explicitly supplying a referenceId for every continuing row; then re-read the recipe before ' +
+      'retrying, because the ingredient write changes the recipe snapshot and its updatedAt); the MCP never infers links ' +
+      '— deciding wording, sectioning and which ingredients belong to a step is your job. Delta updates preserve ' +
+      'omitted fields, untouched instructions and existing noteReferences exactly (existing dangling ingredient ' +
+      'references are not cleaned up). A change that leaves instructions identical skips the write and returns the ' +
+      'current recipe. After a write the returned recipe is verified by content (text/title/summary/ingredient ' +
+      'and note references, ignoring ids); on mismatch the original instructions are restored best-effort and the ' +
+      'call fails, reporting whether rollback succeeded (ids are regenerated by each write and rollback).',
+    {
+      slug: z.string().describe('Slug of the recipe to update.'),
+      expectedUpdatedAt: expectedUpdatedAtSchema,
+      instructions: z
+        .array(recipeInstructionInputSchema)
+        .optional()
+        .describe('Replacement form: complete desired ordered instruction list. Cannot be combined with the delta fields.'),
+      ...recipeInstructionDeltaFields(),
+    },
+    async ({ slug, ...input }) => {
+      try {
+        const result = await updateRecipeInstructions(slug, input);
+        return successResponse(result);
+      } catch (error) {
+        return errorResponse(error);
+      }
+    },
+  );
+
+  // @endpoints GET /api/recipes/{slug}, PATCH /api/recipes/{slug}
+  server.tool(
+    'update_recipe_instructions_batch',
+    'Runs update_recipe_instructions for multiple recipes with bounded concurrency (5 at a time). Each entry has ' +
+      'its own slug, its own expectedUpdatedAt (exact updatedAt from that recipe\'s get_recipe_detailed) and exactly ' +
+      'one of the replacement form (instructions) or delta form (addInstructions/updateInstructions/' +
+      'removeInstructionIndexes), with the singular tool\'s semantics. Mealie instruction IDs are ephemeral and ' +
+      'never valid identity. Each recipe is validated, written, verified and rolled back independently: a stale ' +
+      'expectedUpdatedAt, invalid entry, API error or verification failure fails only that entry. Results come ' +
+      'back in input order with requestedCount/succeededCount/failedCount; there is no cross-recipe transaction. ' +
+      `The whole call is rejected before any write for an empty batch, more than ${RECIPE_INSTRUCTIONS_BATCH_MAX_SIZE} ` +
+      'entries, a missing slug, or a repeated slug.',
+    {
+      updates: z
+        .array(
+          z.object({
+            slug: z.string().describe('Slug of the recipe to update.'),
+            expectedUpdatedAt: expectedUpdatedAtSchema,
+            instructions: z
+              .array(recipeInstructionInputSchema)
+              .optional()
+              .describe('Replacement form: complete desired ordered instruction list. Cannot be combined with the delta fields.'),
+            ...recipeInstructionDeltaFields(),
+          }),
+        )
+        .min(1, 'At least one recipe update is required.')
+        .max(RECIPE_INSTRUCTIONS_BATCH_MAX_SIZE, `At most ${RECIPE_INSTRUCTIONS_BATCH_MAX_SIZE} recipes are allowed per batch call.`)
+        .describe(
+          `One entry per recipe. Max ${RECIPE_INSTRUCTIONS_BATCH_MAX_SIZE} per call; each slug must be unique within the call.`,
+        ),
+    },
+    async ({ updates }) => {
+      try {
+        const result = await updateRecipeInstructionsBatch(updates);
         return successResponse(result);
       } catch (error) {
         return errorResponse(error);

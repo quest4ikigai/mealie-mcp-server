@@ -121,9 +121,9 @@ describe('MEALIE_SERVER_INSTRUCTIONS Recipe Creation and Import', () => {
     expect(MEALIE_SERVER_INSTRUCTIONS).toContain('is the single source of truth for ingredient semantics and is not repeated here');
   });
 
-  it('requires preserving instruction step ordering without claiming structured section/group metadata', () => {
+  it('requires preserving instruction step ordering without claiming structured section/group metadata at creation', () => {
     expect(MEALIE_SERVER_INSTRUCTIONS).toContain('Preserve step ordering, and preserve meaningful section/group boundaries within the instruction text itself where practical');
-    expect(MEALIE_SERVER_INSTRUCTIONS).toContain('there\'s no structured title/group field, just ordered text');
+    expect(MEALIE_SERVER_INSTRUCTIONS).toContain('plain ordered text, no title/summary/ingredient links');
   });
 
   it('prefers the source\'s explicit total time and forbids blindly summing prep + cook', () => {
