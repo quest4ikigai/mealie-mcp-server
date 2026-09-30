@@ -520,7 +520,9 @@ export function registerRecipeTools(server: McpServer) {
   // @endpoints GET /api/recipes/{slug}, PATCH /api/recipes/{slug}
   server.tool(
     'patch_recipe',
-    'Partially updates a recipe. Also accepts optional categories/tags/taxonomyMode/createMissing for taxonomy assignment.',
+    'Partially updates a recipe. Also accepts optional categories/tags/taxonomyMode/createMissing for taxonomy assignment. ' +
+      'Unchanged Category/Tag collections are never written; if taxonomy is the only thing requested and nothing ' +
+      'changes, no PATCH is issued and the current recipe is returned with taxonomyChanges.',
     {
       slug: z.string(),
       name: z.string().optional(),
@@ -552,6 +554,10 @@ export function registerRecipeTools(server: McpServer) {
           });
           Object.assign(data, outcome.patchFields);
           taxonomyChanges = { categories: outcome.categories, tags: outcome.tags };
+          // Taxonomy-only no-op: skip the write (Mealie regenerates instruction ids on every PATCH).
+          if (Object.keys(data).length === 0) {
+            return successResponse({ ...recipe, taxonomyChanges });
+          }
         }
 
         const result = await recipesApi.patchRecipe(slug, data);
@@ -670,7 +676,9 @@ export function registerRecipeTools(server: McpServer) {
       'collection, use either categories/tags (+ mode merge/replace) or the delta fields ' +
       'addCategories/removeCategories/addTags/removeTags (current - remove + add, other assignments untouched); ' +
       'additions and removals can be combined in one call. Removals must exist and are never created; ' +
-      'createMissing only applies to additions. Returns final/added/removed/created per collection.',
+      'createMissing only applies to additions. Unchanged Category/Tag collections are never written, whether the ' +
+      'legacy merge/replace form or explicit delta form is used; if nothing changes, no recipe PATCH is issued. ' +
+      'Returns final/added/removed/created per collection.',
     {
       slug: z.string().describe('Slug of the recipe to update.'),
       categories: categoriesParamSchema.optional(),

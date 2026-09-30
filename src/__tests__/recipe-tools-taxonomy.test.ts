@@ -194,3 +194,35 @@ describe('update_recipe_taxonomy_batch tool', () => {
     expect(failed?.error).toMatch(/Not Found/);
   });
 });
+
+describe('patch_recipe taxonomy no-op handling', () => {
+  it('skips the patch for a taxonomy-only no-op and returns the current recipe with taxonomyChanges', async () => {
+    const handler = handlers.get('patch_recipe')!;
+    const response = await handler({ slug: 'chicken-shawarma', categories: ['Dinner'] });
+
+    expect(mockGetRecipe).toHaveBeenCalledTimes(1);
+    expect(mockPatchRecipe).not.toHaveBeenCalled();
+    const body = JSON.parse(response.content[0].text) as Record<string, unknown>;
+    expect(body.id).toBe('recipe-id-1');
+    expect(body).toHaveProperty('taxonomyChanges');
+  });
+
+  it('patches only the scalar field when taxonomy is a no-op', async () => {
+    const handler = handlers.get('patch_recipe')!;
+    const response = await handler({ slug: 'chicken-shawarma', name: 'New Name', categories: ['Dinner'] });
+
+    expect(mockPatchRecipe).toHaveBeenCalledTimes(1);
+    expect(mockPatchRecipe).toHaveBeenCalledWith('chicken-shawarma', { name: 'New Name' });
+    const body = JSON.parse(response.content[0].text) as Record<string, unknown>;
+    expect(body).toHaveProperty('taxonomyChanges');
+  });
+
+  it('combines only the changed taxonomy collection with scalar fields', async () => {
+    const handler = handlers.get('patch_recipe')!;
+    await handler({ slug: 'chicken-shawarma', name: 'New Name', categories: ['Dessert'], tags: ['Quick'] });
+
+    expect(mockPatchRecipe).toHaveBeenCalledTimes(1);
+    const [, patchData] = mockPatchRecipe.mock.calls[0];
+    expect(Object.keys(patchData).sort()).toEqual(['name', 'recipeCategory']);
+  });
+});

@@ -67,6 +67,8 @@ Every value in `categories`/`tags` may be a name, a slug, or an ID — matching 
 
 `createMissing: true` above means `Weeknight` and `Middle Eastern` are created automatically if they don't already exist.
 
+Unchanged Category/Tag collections are never written, whether the legacy merge/replace form or the explicit delta form is used. A `replace` with the same set in a different order, or a `merge` of already-assigned values, is a no-op. If nothing changes, no recipe PATCH is issued (Mealie regenerates instruction IDs on every recipe write); mixed requests write only the collections that change. `patch_recipe` follows the same rule: no-op taxonomy is omitted from the payload, and a taxonomy-only no-op returns the current recipe with `taxonomyChanges` without any PATCH.
+
 **Clear all categories from a recipe** by passing an explicit empty array with `mode: "replace"` — omitting `categories` instead would leave it untouched:
 
 ```json

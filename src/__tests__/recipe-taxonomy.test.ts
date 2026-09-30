@@ -439,3 +439,60 @@ describe('delta taxonomy updates', () => {
     expect(mockCreateTag).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('no-op legacy taxonomy updates', () => {
+  it('skips the PATCH for a merge of an already-assigned category', async () => {
+    const result = await updateRecipeTaxonomy('chicken-shawarma', { categories: ['Dinner'] });
+
+    expect(mockPatchRecipe).not.toHaveBeenCalled();
+    expect(result.categories?.final.map((c) => c.name)).toEqual(['Dinner']);
+    expect(result.categories?.added).toEqual([]);
+    expect(result.categories?.removed).toEqual([]);
+    expect(result.categories?.created).toEqual([]);
+  });
+
+  it('skips the PATCH for a merge with an empty array', async () => {
+    const result = await updateRecipeTaxonomy('chicken-shawarma', { tags: [], mode: 'merge' });
+
+    expect(mockPatchRecipe).not.toHaveBeenCalled();
+    expect(result.tags?.final.map((t) => t.name)).toEqual(['Quick']);
+  });
+
+  it('skips the PATCH for a replace with the same set in a different order', async () => {
+    mockGetRecipe.mockResolvedValue(baseRecipe({ recipeCategory: [DINNER, DESSERT], tags: [QUICK, DAIRY_FREE] }));
+
+    const result = await updateRecipeTaxonomy('chicken-shawarma', {
+      categories: ['Dessert', 'Dinner'],
+      tags: ['Dairy-Free', 'Quick'],
+      mode: 'replace',
+    });
+
+    expect(mockPatchRecipe).not.toHaveBeenCalled();
+    expect(result.categories?.added).toEqual([]);
+    expect(result.categories?.removed).toEqual([]);
+    expect(result.tags?.added).toEqual([]);
+    expect(result.tags?.removed).toEqual([]);
+  });
+
+  it('patches only the changed collection in a mixed legacy/delta request', async () => {
+    await updateRecipeTaxonomy('chicken-shawarma', { categories: ['Dinner'], addTags: ['Dairy-Free'] });
+
+    expect(mockPatchRecipe).toHaveBeenCalledTimes(1);
+    const [, patchData] = mockPatchRecipe.mock.calls[0];
+    expect(Object.keys(patchData)).toEqual(['tags']);
+  });
+
+  it('batch: a no-op entry succeeds without a PATCH and does not affect siblings', async () => {
+    mockGetRecipe.mockImplementation((slug: string) => Promise.resolve(baseRecipe({ slug })));
+    const results = await updateRecipeTaxonomyBatch([
+      { slug: 'chicken-shawarma', categories: ['Dinner'] },
+      { slug: 'other', categories: ['Dessert'] },
+      { slug: 'third', categories: ['Nonexistent'] },
+    ]);
+
+    expect(results.map((r) => r.slug)).toEqual(['chicken-shawarma', 'other', 'third']);
+    expect(results.map((r) => r.success)).toEqual([true, true, false]);
+    expect(mockPatchRecipe).toHaveBeenCalledTimes(1);
+    expect(mockPatchRecipe.mock.calls[0][0]).toBe('other');
+  });
+});
