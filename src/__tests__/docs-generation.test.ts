@@ -1,8 +1,36 @@
 import { describe, it, expect } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
+import { pathToFileURL } from 'url';
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { registerAllTools } from '../tools/index.js';
 
 const ROOT = process.cwd();
+
+interface GeneratedTool {
+  name: string;
+  description: string;
+  params: { name: string }[];
+}
+
+async function loadGeneratedTools(): Promise<GeneratedTool[]> {
+  const mod = (await import(pathToFileURL(path.join(ROOT, 'scripts/gen-docs.mjs')).href)) as {
+    collectTools: () => { tools: GeneratedTool[] };
+  };
+  return mod.collectTools().tools;
+}
+
+/** Records exactly what each server.tool() call receives at runtime. */
+function captureRegisteredTools(): Map<string, { description: string; keys: string[] }> {
+  const captured = new Map<string, { description: string; keys: string[] }>();
+  const fakeServer = {
+    tool: (name: string, description: string, shape: Record<string, unknown>) => {
+      captured.set(name, { description, keys: Object.keys(shape) });
+    },
+  };
+  registerAllTools(fakeServer as unknown as McpServer);
+  return captured;
+}
 
 function read(rel: string): string {
   const fullPath = path.isAbsolute(rel) ? rel : path.join(ROOT, rel);
@@ -130,5 +158,25 @@ describe('docs generation invariants', () => {
     const totalMatch = readme.match(/## Available Tools \((\d+) total\)/);
     expect(totalMatch).not.toBeNull();
     expect(Number(totalMatch![1])).toBe(allToolNames.length);
+  });
+
+  it('generated descriptions and params match what server.tool() receives at runtime', async () => {
+    const runtime = captureRegisteredTools();
+    const generated = await loadGeneratedTools();
+
+    expect(generated.map((t) => t.name).sort()).toEqual([...runtime.keys()].sort());
+    for (const tool of generated) {
+      const actual = runtime.get(tool.name)!;
+      expect(tool.description, `${tool.name} description`).toBe(actual.description);
+      expect(
+        tool.params.map((p) => p.name),
+        `${tool.name} params`,
+      ).toEqual(actual.keys);
+    }
+  });
+
+  it('generated descriptions are single-line so they render in API_COVERAGE.md', async () => {
+    const generated = await loadGeneratedTools();
+    expect(generated.filter((t) => t.description.includes('\n')).map((t) => t.name)).toEqual([]);
   });
 });

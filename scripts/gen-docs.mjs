@@ -8,6 +8,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
+import ts from 'typescript';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -50,53 +51,159 @@ function extractEndpoints(filePath) {
   return map;
 }
 
-// ── param extraction from source ────────────────────────────────────────────
+// ── AST-based description/param extraction ──────────────────────────────────
 
-function extractParamInfo(filePath) {
-  const source = read(filePath);
-  const result = new Map();
+const sourceFileCache = new Map();
 
-  const toolSections = source.split(/server\.tool\(/g).slice(1);
+function parseSource(fullPath) {
+  let sf = sourceFileCache.get(fullPath);
+  if (!sf) {
+    sf = ts.createSourceFile(fullPath, fs.readFileSync(fullPath, 'utf8'), ts.ScriptTarget.Latest, true);
+    sourceFileCache.set(fullPath, sf);
+  }
+  return sf;
+}
 
-  for (const section of toolSections) {
-    const nameMatch = section.match(/^\s*'([a-zA-Z_]+)'/);
-    if (!nameMatch) continue;
-    const toolName = nameMatch[1];
+function unwrap(node) {
+  while (
+    ts.isParenthesizedExpression(node) ||
+    ts.isAsExpression(node) ||
+    ts.isSatisfiesExpression(node) ||
+    ts.isNonNullExpression(node)
+  ) {
+    node = node.expression;
+  }
+  return node;
+}
 
-    let rest = section.slice(nameMatch[0].length);
+/** Finds a top-level const initializer or function declaration by name, following relative imports. */
+function lookupDeclaration(sf, name, seen = new Set()) {
+  const key = `${sf.fileName}:${name}`;
+  if (seen.has(key)) return undefined;
+  seen.add(key);
 
-    const descSkip = rest.match(/^\s*,\s*'[^']*'/);
-    if (descSkip) {
-      rest = rest.slice(descSkip[0].length);
-    }
-
-    const shapeMatch = rest.match(/^\s*,\s*(\{[\s\S]*?\})\s*,/);
-    if (!shapeMatch) continue;
-
-    const shapeStr = shapeMatch[1];
-    const paramNames = [];
-    const propPattern = /(\w+)\s*:\s*z\./g;
-    let propMatch;
-    while ((propMatch = propPattern.exec(shapeStr)) !== null) {
-      if (!paramNames.includes(propMatch[1])) {
-        paramNames.push(propMatch[1]);
+  for (const stmt of sf.statements) {
+    if (ts.isVariableStatement(stmt)) {
+      for (const decl of stmt.declarationList.declarations) {
+        if (ts.isIdentifier(decl.name) && decl.name.text === name && decl.initializer) {
+          return { sf, node: decl.initializer };
+        }
       }
-    }
-
-    const varRefPattern = /(\w+)\s*:\s*(\w+Schema|\w+ParamSchema)/g;
-    let varMatch;
-    while ((varMatch = varRefPattern.exec(shapeStr)) !== null) {
-      if (!paramNames.includes(varMatch[1])) {
-        paramNames.push(varMatch[1]);
-      }
-    }
-
-    if (paramNames.length > 0) {
-      result.set(toolName, paramNames);
+    } else if (ts.isFunctionDeclaration(stmt) && stmt.name?.text === name && stmt.body) {
+      return { sf, node: stmt };
     }
   }
 
-  return result;
+  for (const stmt of sf.statements) {
+    if (
+      !ts.isImportDeclaration(stmt) ||
+      !ts.isStringLiteral(stmt.moduleSpecifier) ||
+      !stmt.moduleSpecifier.text.startsWith('.') ||
+      !stmt.importClause?.namedBindings ||
+      !ts.isNamedImports(stmt.importClause.namedBindings)
+    ) {
+      continue;
+    }
+    for (const el of stmt.importClause.namedBindings.elements) {
+      if (el.name.text !== name) continue;
+      const importedName = (el.propertyName ?? el.name).text;
+      const target = path.resolve(
+        path.dirname(sf.fileName),
+        stmt.moduleSpecifier.text.replace(/\.js$/, '.ts'),
+      );
+      return lookupDeclaration(parseSource(target), importedName, seen);
+    }
+  }
+  return undefined;
+}
+
+/** Statically evaluates string/number expressions: literals, templates, `+` concatenation, constants. */
+function evalConst(node, sf) {
+  node = unwrap(node);
+  if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node) || ts.isNumericLiteral(node)) {
+    return ts.isNumericLiteral(node) ? Number(node.text) : node.text;
+  }
+  if (ts.isTemplateExpression(node)) {
+    let out = node.head.text;
+    for (const span of node.templateSpans) {
+      out += String(evalConst(span.expression, sf)) + span.literal.text;
+    }
+    return out;
+  }
+  if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.PlusToken) {
+    const left = evalConst(node.left, sf);
+    const right = evalConst(node.right, sf);
+    return typeof left === 'number' && typeof right === 'number' ? left + right : String(left) + String(right);
+  }
+  if (ts.isIdentifier(node)) {
+    const decl = lookupDeclaration(sf, node.text);
+    if (decl && !ts.isFunctionDeclaration(decl.node)) return evalConst(decl.node, decl.sf);
+  }
+  throw new Error(`Cannot statically evaluate expression: ${node.getText(sf)}`);
+}
+
+/** Collects the property names of a zod raw shape expression (object literal, spreads, helpers, variables). */
+function shapeKeys(node, sf, keys = []) {
+  node = unwrap(node);
+
+  if (ts.isObjectLiteralExpression(node)) {
+    for (const prop of node.properties) {
+      if (ts.isSpreadAssignment(prop)) {
+        shapeKeys(prop.expression, sf, keys);
+      } else if (
+        (ts.isPropertyAssignment(prop) || ts.isShorthandPropertyAssignment(prop) || ts.isMethodDeclaration(prop)) &&
+        (ts.isIdentifier(prop.name) || ts.isStringLiteral(prop.name))
+      ) {
+        if (!keys.includes(prop.name.text)) keys.push(prop.name.text);
+      } else {
+        throw new Error(`Unsupported schema property: ${prop.getText(sf)}`);
+      }
+    }
+    return keys;
+  }
+
+  if (ts.isIdentifier(node)) {
+    const decl = lookupDeclaration(sf, node.text);
+    if (decl && !ts.isFunctionDeclaration(decl.node)) return shapeKeys(decl.node, decl.sf, keys);
+  }
+
+  if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
+    const decl = lookupDeclaration(sf, node.expression.text);
+    if (decl && ts.isFunctionDeclaration(decl.node)) {
+      const ret = decl.node.body.statements.find((st) => ts.isReturnStatement(st) && st.expression);
+      if (ret) return shapeKeys(ret.expression, decl.sf, keys);
+    }
+  }
+
+  throw new Error(`Cannot resolve tool schema shape: ${node.getText(sf)}`);
+}
+
+/** Returns name/description/param names for every server.tool() call in a file, from the AST. */
+function extractToolDefinitions(filePath) {
+  const sf = parseSource(filePath);
+  const defs = [];
+
+  const visit = (node) => {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      node.expression.name.text === 'tool' &&
+      node.expression.expression.getText(sf) === 'server'
+    ) {
+      const [nameArg, descArg, shapeArg] = node.arguments;
+      const name = evalConst(nameArg, sf);
+      const description = descArg ? evalConst(descArg, sf) : '';
+      if (typeof description !== 'string') {
+        throw new Error(`${name}: description must be a string`);
+      }
+      const hasShape = shapeArg && !ts.isArrowFunction(unwrap(shapeArg)) && !ts.isFunctionExpression(unwrap(shapeArg));
+      defs.push({ name, description, paramNames: hasShape ? shapeKeys(shapeArg, sf) : [] });
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+
+  return defs;
 }
 
 // ── category definitions ────────────────────────────────────────────────────
@@ -125,7 +232,7 @@ const FILE_TO_CATEGORY = {
 
 // ── collect tools from source ───────────────────────────────────────────────
 
-function collectTools() {
+export function collectTools() {
   const toolsDir = path.join(ROOT, 'src/tools');
   const toolFiles = fs.readdirSync(toolsDir).filter((f) => f.endsWith('.ts') && f !== 'index.ts');
   const tools = [];
@@ -134,16 +241,10 @@ function collectTools() {
     const filePath = path.join(toolsDir, file);
     const category = FILE_TO_CATEGORY[file] ?? file.replace('.ts', '');
     const endpoints = extractEndpoints(filePath);
-    const paramInfo = extractParamInfo(filePath);
 
-    const source = read(filePath);
-    const toolRegex =
-      /server\.tool\(\s*\n?\s*'([a-zA-Z_]+)'(?:\s*,\s*\n?\s*'([^']*)')?/g;
-
-    let match;
-    while ((match = toolRegex.exec(source)) !== null) {
-      const toolName = match[1];
-      const description = match[2] ?? '';
+    for (const def of extractToolDefinitions(filePath)) {
+      const toolName = def.name;
+      const description = def.description;
 
       const toolEndpoints = endpoints.get(toolName) ?? [];
       if (toolEndpoints.length === 0) {
@@ -151,8 +252,7 @@ function collectTools() {
         process.exit(1);
       }
 
-      const paramNames = paramInfo.get(toolName) ?? [];
-      const params = paramNames.map((name) => ({ name, description: '' }));
+      const params = def.paramNames.map((name) => ({ name, description: '' }));
 
       tools.push({
         name: toolName,
@@ -323,4 +423,6 @@ function main() {
   log(`Generated docs for ${tools.length} tools and ${prompts.length} prompts.`);
 }
 
-main();
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main();
+}
