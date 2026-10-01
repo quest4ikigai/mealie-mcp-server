@@ -1,7 +1,10 @@
 import http from 'node:http';
-import type { AddressInfo } from 'node:net';
+import net, { type AddressInfo } from 'node:net';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { z } from 'zod';
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 
 vi.mock('../api/recipes.js', () => ({
   uploadRecipeImage: vi.fn(),
@@ -11,7 +14,7 @@ vi.mock('../api/recipes.js', () => ({
 
 import * as recipesApi from '../api/recipes.js';
 import { setRecipeImageFromFile, setRecipeImage, RECIPE_IMAGE_MAX_BYTES } from '../lib/recipe-image.js';
-import { isPrivateAddress, pinnedTransport, downloadBounded } from '../lib/safe-download.js';
+import { isPrivateAddress, pinnedTransport, createPinnedTransport, downloadBounded } from '../lib/safe-download.js';
 import { registerRecipeTools } from '../tools/recipes.js';
 
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
@@ -29,8 +32,8 @@ const ok = (body: Buffer | Uint8Array, headers: Record<string, string> = {}) =>
   new Response(new Uint8Array(body), { status: 200, headers });
 
 const fetchMock = vi.fn();
-const transport = (url: URL, address: string, signal: AbortSignal): Promise<Response> =>
-  fetchMock(url, { signal, address }) as Promise<Response>;
+const transport = (url: URL, addresses: string[], signal: AbortSignal): Promise<Response> =>
+  fetchMock(url, { signal, addresses }) as Promise<Response>;
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -115,7 +118,7 @@ describe('setRecipeImageFromFile', () => {
       .mockResolvedValueOnce(ok(PNG));
     await setRecipeImageFromFile('s', file(), { transport, resolve });
     expect(String(fetchMock.mock.calls[1][0])).toBe('https://files.example.com/b');
-    expect((fetchMock.mock.calls[0][1] as { address: string }).address).toBe('93.184.216.34');
+    expect((fetchMock.mock.calls[0][1] as { addresses: string[] }).addresses).toEqual(['93.184.216.34']);
 
     fetchMock.mockReset();
     fetchMock.mockImplementation(() =>
@@ -192,21 +195,85 @@ describe('set_recipe_image_from_file registration', () => {
     expect(reg.set_recipe_image.handle._meta).toBeUndefined();
     expect(reg.set_recipe_image_from_url.handle._meta).toBeUndefined();
   });
+
+  it('emits openai/fileParams in a real McpServer tools/list response only for the file tool', async () => {
+    const server = new McpServer({ name: 'mealie-mcp-server', version: '1.0.0' });
+    registerRecipeTools(server);
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: 'test-client', version: '1.0.0' });
+    await Promise.all([client.connect(clientTransport), server.connect(serverTransport)]);
+    try {
+      const { tools } = await client.listTools();
+      const byName = (name: string) => tools.find((t) => t.name === name)!;
+      expect(byName('set_recipe_image_from_file')._meta).toEqual({ 'openai/fileParams': ['file'] });
+      expect(byName('set_recipe_image')._meta?.['openai/fileParams']).toBeUndefined();
+      expect(byName('set_recipe_image_from_url')._meta?.['openai/fileParams']).toBeUndefined();
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
 });
 
 describe('DNS pinning', () => {
-  it('connects to the validated address for each redirect hop, not a fresh resolution', async () => {
-    const answers = [['93.184.216.34'], ['93.184.216.35']];
+  it('connects to the validated addresses for each redirect hop, not a fresh resolution', async () => {
+    const answers = [['2606:2800:220:1::1', '93.184.216.34'], ['93.184.216.35']];
     const rotating = vi.fn(() => Promise.resolve(answers.shift()!));
     fetchMock
       .mockResolvedValueOnce(new Response(null, { status: 302, headers: { location: 'https://other.example.com/b' } }))
       .mockResolvedValueOnce(ok(PNG));
     await downloadBounded('https://files.example.com/a', 1024, { resolve: rotating, transport });
     expect(rotating).toHaveBeenCalledTimes(2);
-    expect(fetchMock.mock.calls.map((c) => (c[1] as { address: string }).address)).toEqual([
-      '93.184.216.34',
-      '93.184.216.35',
+    expect(fetchMock.mock.calls.map((c) => (c[1] as { addresses: string[] }).addresses)).toEqual([
+      ['2606:2800:220:1::1', '93.184.216.34'],
+      ['93.184.216.35'],
     ]);
+  });
+
+  it('refuses a resolver answer that mixes public and private addresses', async () => {
+    await expect(
+      downloadBounded('https://files.example.com/a', 1024, {
+        resolve: () => Promise.resolve(['93.184.216.34', '10.0.0.5']),
+        transport,
+      }),
+    ).rejects.toThrow(/private/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('pinnedTransport falls back to the next validated address when the first is unreachable', async () => {
+    const server = http.createServer((_req, res) => res.end('hi'));
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    const port = (server.address() as AddressInfo).port;
+    try {
+      // ::1 is not listening on this port, so the connection must fall back to 127.0.0.1.
+      const res = await createPinnedTransport(() => false)(
+        new URL(`http://pinned.invalid:${port}/`),
+        ['::1', '127.0.0.1'],
+        AbortSignal.timeout(5000),
+      );
+      expect(await res.text()).toBe('hi');
+    } finally {
+      server.close();
+    }
+  });
+
+  it('pinnedTransport rejects out-of-range HTTP statuses without crashing', async () => {
+    const server = net.createServer((socket) => {
+      socket.once('data', () => socket.end('HTTP/1.1 700 Weird\r\nContent-Length: 0\r\n\r\n'));
+    });
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    const port = (server.address() as AddressInfo).port;
+    try {
+      await expect(
+        createPinnedTransport(() => false)(
+          new URL(`http://pinned.invalid:${port}/`),
+          ['127.0.0.1'],
+          AbortSignal.timeout(5000),
+        ),
+      ).rejects.toThrow(/unsupported HTTP status 700/);
+    } finally {
+      server.close();
+    }
   });
 
   it('pinnedTransport connects to the pinned address regardless of hostname and keeps the Host header', async () => {
@@ -220,7 +287,7 @@ describe('DNS pinning', () => {
     try {
       // 127.0.0.1 is private, so the defense-in-depth remote check must refuse it...
       await expect(
-        pinnedTransport(new URL(`http://pinned.invalid:${port}/`), '127.0.0.1', AbortSignal.timeout(5000)),
+        pinnedTransport(new URL(`http://pinned.invalid:${port}/`), ['127.0.0.1'], AbortSignal.timeout(5000)),
       ).rejects.toThrow(/private/);
       // ...but only after connecting via the pinned address (pinned.invalid never resolves in DNS).
       expect(host).toBeUndefined();

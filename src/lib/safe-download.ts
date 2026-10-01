@@ -9,8 +9,8 @@ export const DOWNLOAD_MAX_REDIRECTS = 3;
 
 export type HostResolver = (hostname: string) => Promise<string[]>;
 
-/** Performs one request to `url`, connecting only to `address` (already validated as public). */
-export type PinnedTransport = (url: URL, address: string, signal: AbortSignal) => Promise<Response>;
+/** Performs one request to `url`, connecting only to one of `addresses` (all already validated as public). */
+export type PinnedTransport = (url: URL, addresses: string[], signal: AbortSignal) => Promise<Response>;
 
 const defaultResolver: HostResolver = async (hostname) =>
   (await lookup(hostname, { all: true })).map((r) => r.address);
@@ -68,7 +68,7 @@ async function assertSafeUrl(
   raw: string,
   resolve: HostResolver,
   signal: AbortSignal,
-): Promise<{ url: URL; address: string }> {
+): Promise<{ url: URL; addresses: string[] }> {
   let url: URL;
   try {
     url = new URL(raw);
@@ -87,19 +87,23 @@ async function assertSafeUrl(
   if (addresses.some(isPrivateAddress)) {
     throw new Error('download_url points to a private or non-public address and was refused.');
   }
-  // Pin the connection to a validated address so a second DNS answer cannot redirect it (DNS rebinding).
-  return { url, address: addresses[0] };
+  // Pin the connection to the validated addresses so a second DNS answer cannot redirect it (DNS rebinding).
+  return { url, addresses };
 }
 
 /**
- * Real transport: node:http(s) with a lookup that always answers with the validated address, so the
+ * Real transport: node:http(s) with a lookup that always answers with the validated addresses, so the
  * hostname (Host header, TLS SNI/certificate check) is preserved while DNS is never consulted again.
- * The connected socket's remote address is re-validated as defense in depth.
+ * Answering `all` lookups with every validated address lets Node's autoSelectFamily fall back between
+ * them (e.g. an unreachable AAAA record). The connected socket's remote address is re-validated with
+ * `isPrivate` as defense in depth.
  */
-export const pinnedTransport: PinnedTransport = (url, address, signal) =>
+export const createPinnedTransport =
+  (isPrivate: (ip: string) => boolean): PinnedTransport =>
+  (url, addresses, signal) =>
   new Promise<Response>((resolvePromise, reject) => {
     const mod = url.protocol === 'https:' ? https : http;
-    const family = isIP(address);
+    const pinned = addresses.map((address) => ({ address, family: isIP(address) }));
     const req = mod.request(
       url,
       {
@@ -107,11 +111,11 @@ export const pinnedTransport: PinnedTransport = (url, address, signal) =>
         agent: false,
         signal,
         lookup: ((_host: string, opts: { all?: boolean }, cb: (...args: unknown[]) => void) =>
-          opts?.all ? cb(null, [{ address, family }]) : cb(null, address, family)) as never,
+          opts?.all ? cb(null, pinned) : cb(null, pinned[0].address, pinned[0].family)) as never,
       },
       (res) => {
         const remote = res.socket.remoteAddress;
-        if (!remote || isPrivateAddress(remote)) {
+        if (!remote || isPrivate(remote)) {
           res.destroy();
           reject(new Error('download_url connected to a private or non-public address and was refused.'));
           return;
@@ -136,7 +140,7 @@ export const pinnedTransport: PinnedTransport = (url, address, signal) =>
     req.on('socket', (socket) => {
       socket.once('connect', () => {
         const remote = socket.remoteAddress;
-        if (!remote || isPrivateAddress(remote)) {
+        if (!remote || isPrivate(remote)) {
           req.destroy(new Error('download_url connected to a private or non-public address and was refused.'));
         }
       });
@@ -144,6 +148,8 @@ export const pinnedTransport: PinnedTransport = (url, address, signal) =>
     req.on('error', reject);
     req.end();
   });
+
+export const pinnedTransport: PinnedTransport = createPinnedTransport(isPrivateAddress);
 
 async function readBodyBounded(res: Response, maxBytes: number): Promise<Uint8Array<ArrayBuffer>> {
   const tooLarge = () => new Error(`Downloaded file exceeds the ${maxBytes / (1024 * 1024)} MB limit.`);
@@ -186,8 +192,8 @@ export async function downloadBounded(
   let current = rawUrl;
   try {
     for (let hop = 0; hop <= DOWNLOAD_MAX_REDIRECTS; hop++) {
-      const { url, address } = await assertSafeUrl(current, resolve, signal);
-      const res = await transport(url, address, signal);
+      const { url, addresses } = await assertSafeUrl(current, resolve, signal);
+      const res = await transport(url, addresses, signal);
       if (res.status >= 300 && res.status < 400) {
         const location = res.headers.get('location');
         await res.body?.cancel().catch(() => undefined);
