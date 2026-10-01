@@ -1,10 +1,16 @@
 import { lookup } from 'node:dns/promises';
+import http from 'node:http';
+import https from 'node:https';
 import { isIP } from 'node:net';
+import { Readable } from 'node:stream';
 
 export const DOWNLOAD_TIMEOUT_MS = 30_000;
 export const DOWNLOAD_MAX_REDIRECTS = 3;
 
 export type HostResolver = (hostname: string) => Promise<string[]>;
+
+/** Performs one request to `url`, connecting only to `address` (already validated as public). */
+export type PinnedTransport = (url: URL, address: string, signal: AbortSignal) => Promise<Response>;
 
 const defaultResolver: HostResolver = async (hostname) =>
   (await lookup(hostname, { all: true })).map((r) => r.address);
@@ -54,7 +60,11 @@ function raceAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
   });
 }
 
-async function assertSafeUrl(raw: string, resolve: HostResolver, signal: AbortSignal): Promise<URL> {
+async function assertSafeUrl(
+  raw: string,
+  resolve: HostResolver,
+  signal: AbortSignal,
+): Promise<{ url: URL; address: string }> {
   let url: URL;
   try {
     url = new URL(raw);
@@ -73,8 +83,58 @@ async function assertSafeUrl(raw: string, resolve: HostResolver, signal: AbortSi
   if (addresses.some(isPrivateAddress)) {
     throw new Error('download_url points to a private or non-public address and was refused.');
   }
-  return url;
+  // Pin the connection to a validated address so a second DNS answer cannot redirect it (DNS rebinding).
+  return { url, address: addresses[0] };
 }
+
+/**
+ * Real transport: node:http(s) with a lookup that always answers with the validated address, so the
+ * hostname (Host header, TLS SNI/certificate check) is preserved while DNS is never consulted again.
+ * The connected socket's remote address is re-validated as defense in depth.
+ */
+export const pinnedTransport: PinnedTransport = (url, address, signal) =>
+  new Promise<Response>((resolvePromise, reject) => {
+    const mod = url.protocol === 'https:' ? https : http;
+    const family = isIP(address);
+    const req = mod.request(
+      url,
+      {
+        method: 'GET',
+        agent: false,
+        signal,
+        lookup: ((_host: string, opts: { all?: boolean }, cb: (...args: unknown[]) => void) =>
+          opts?.all ? cb(null, [{ address, family }]) : cb(null, address, family)) as never,
+      },
+      (res) => {
+        const remote = res.socket.remoteAddress;
+        if (!remote || isPrivateAddress(remote)) {
+          res.destroy();
+          reject(new Error('download_url connected to a private or non-public address and was refused.'));
+          return;
+        }
+        const headers = new Headers();
+        for (let i = 0; i < res.rawHeaders.length; i += 2) headers.append(res.rawHeaders[i], res.rawHeaders[i + 1]);
+        const status = res.statusCode ?? 0;
+        const nullBody = status === 204 || status === 205 || status === 304;
+        resolvePromise(
+          new Response(nullBody ? null : (Readable.toWeb(res) as unknown as ReadableStream<Uint8Array>), {
+            status,
+            headers,
+          }),
+        );
+      },
+    );
+    req.on('socket', (socket) => {
+      socket.once('connect', () => {
+        const remote = socket.remoteAddress;
+        if (!remote || isPrivateAddress(remote)) {
+          req.destroy(new Error('download_url connected to a private or non-public address and was refused.'));
+        }
+      });
+    });
+    req.on('error', reject);
+    req.end();
+  });
 
 async function readBodyBounded(res: Response, maxBytes: number): Promise<Uint8Array<ArrayBuffer>> {
   const tooLarge = () => new Error(`Downloaded file exceeds the ${maxBytes / (1024 * 1024)} MB limit.`);
@@ -109,15 +169,16 @@ async function readBodyBounded(res: Response, maxBytes: number): Promise<Uint8Ar
 export async function downloadBounded(
   rawUrl: string,
   maxBytes: number,
-  options: { timeoutMs?: number; resolve?: HostResolver } = {},
+  options: { timeoutMs?: number; resolve?: HostResolver; transport?: PinnedTransport } = {},
 ): Promise<Uint8Array<ArrayBuffer>> {
   const resolve = options.resolve ?? defaultResolver;
+  const transport = options.transport ?? pinnedTransport;
   const signal = AbortSignal.timeout(options.timeoutMs ?? DOWNLOAD_TIMEOUT_MS);
   let current = rawUrl;
   try {
     for (let hop = 0; hop <= DOWNLOAD_MAX_REDIRECTS; hop++) {
-      const url = await assertSafeUrl(current, resolve, signal);
-      const res = await fetch(url, { redirect: 'manual', signal });
+      const { url, address } = await assertSafeUrl(current, resolve, signal);
+      const res = await transport(url, address, signal);
       if (res.status >= 300 && res.status < 400) {
         const location = res.headers.get('location');
         await res.body?.cancel().catch(() => undefined);

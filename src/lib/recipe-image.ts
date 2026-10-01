@@ -1,5 +1,5 @@
 import * as recipesApi from '../api/recipes.js';
-import { downloadBounded, type HostResolver } from './safe-download.js';
+import { downloadBounded, type HostResolver, type PinnedTransport } from './safe-download.js';
 
 export const RECIPE_IMAGE_MAX_BYTES = 10 * 1024 * 1024;
 
@@ -82,7 +82,7 @@ export interface RecipeImageFileRef {
 export async function setRecipeImageFromFile(
   slug: string,
   file: RecipeImageFileRef,
-  options: { timeoutMs?: number; resolve?: HostResolver } = {},
+  options: { timeoutMs?: number; resolve?: HostResolver; transport?: PinnedTransport } = {},
 ): Promise<Record<string, unknown>> {
   const bytes = await downloadBounded(file.download_url, RECIPE_IMAGE_MAX_BYTES, options);
   if (bytes.length === 0) throw new Error('Downloaded file is empty.');
