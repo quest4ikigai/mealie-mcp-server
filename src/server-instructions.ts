@@ -163,4 +163,8 @@ export const MEALIE_SERVER_INSTRUCTIONS = [
   '2. Use the delta form (`addInstructions`/`updateInstructions`/`removeInstructionIndexes`) for focused edits; use complete replacement (`instructions`) for a substantial rebuild or reordering. The two cannot be mixed.',
   '3. Link instructions to ingredients with `ingredientReferenceIds` taken from the recipe\'s `recipeIngredient[].referenceId`. Which ingredients belong to which step, and the wording and sectioning, are your decisions — the MCP never infers them. Unknown ids are rejected before any write.',
   '4. Changes that leave instructions identical skip the write. Writes are verified by content and rolled back on mismatch; the result reports whether rollback succeeded.',
+  '',
+  '## Recipe Data Enrichment',
+  '',
+  'When the user asks to enrich, complete, or clean up recipes without naming one dimension, use `get_recipes_for_data_enrichment` (all dimensions by default; narrow `dimensions` when the request is narrower) and page with `nextCursor` until `hasMore` is false. It reports deterministic facts only — zero Tools, no ingredient section titles, no instruction ingredient references, zero tags/categories, no image, unparsed ingredients — and never decides what a recipe needs. Decide per recipe which flagged dimensions truly warrant a change, and skip the rest. Write with the existing tools in this order: ingredients (`update_recipe_ingredients`), then instruction sections/links (`update_recipe_instructions`), Tools (`get_tool_matches` + `update_recipe_tools`), taxonomy (`update_recipe_taxonomy`), and an image only from a real source. Retry only failed recipes rather than restarting pagination.',
 ].join('\n');

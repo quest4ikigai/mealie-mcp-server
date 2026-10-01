@@ -561,6 +561,32 @@ Pagination reuses the same stable, opaque cursor mechanism as `get_recipes_for_c
 
 As with `get_recipes_for_classification`, a failure reading one recipe is reported in `failures` and does not fail the rest of the page.
 
+## Recipe Data Enrichment Workflow
+
+`get_recipes_for_data_enrichment` is a paginated, **READ-ONLY**, holistic queue that audits several enrichment dimensions at once. It reports deterministic, schema-only facts (built on the shared audit model in `src/lib/recipe-audit.ts`); the calling model decides what, if anything, should change.
+
+| Dimension | Flagged when (fact) | Model decides |
+| --- | --- | --- |
+| `ingredient_parsing` | at least one non-section ingredient has no food | how to structure the line |
+| `ingredient_sections` | ingredients exist and none carries a section title | whether and how to section them |
+| `instruction_ingredient_links` | instructions exist and none references an ingredient, or a reference matches no ingredient `referenceId` | which references are semantically correct |
+| `tools` | tool count is zero | whether the recipe needs a Tool |
+| `taxonomy` | category count or tag count is zero | whether taxonomy should change |
+| `image` | no image is set | whether image enrichment should run |
+
+Arguments: `cursor` (opaque, pass `nextCursor` back unchanged), `limit` (1-50, default 25), `dimensions` (default all; selects both the filter and which flags are reported), `onlyFlagged` (default `true`; `false` returns every scanned recipe for auditing). Each item has recipe context (times, yield, categories, tags, tools, compact ingredients with `parsingState`, instructions with `ingredientReferences`), an `audit` of counts, and `flaggedDimensions`. A recipe that fails its detail fetch is reported in `failures` without failing the page; `returnedCount` below `limit` with `hasMore: true` means the time budget was reached first.
+
+### Recommended default orchestration
+
+For an ambiguous request like "enrich my recipes" (or "clean up my recipes"), unless the user narrows the scope:
+
+1. Page through `get_recipes_for_data_enrichment` with all dimensions until `hasMore` is `false`.
+2. Per recipe, read the context and decide which flagged dimensions genuinely warrant a change. A flag is a signal, not a verdict — leave a dimension alone when the recipe doesn't need it.
+3. Apply changes with the existing write tools: `update_recipe_ingredients` (after `get_food_matches`/`get_unit_matches`), then `update_recipe_instructions` for sections/ingredient links (ingredient `referenceId`s must be settled first), `update_recipe_tools` (after `get_tool_matches`), `update_recipe_taxonomy`, and `set_recipe_image*` only with a real image source.
+4. Retry only failed recipes; don't restart pagination. Re-read only where uncertain.
+
+When the user asks about one dimension, pass just that dimension (or use the focused queues).
+
 ## Server Instructions
 
 Beyond the per-tool descriptions documented above, this server publishes **server-level MCP instructions** (`src/server-instructions.ts`) — a single string sent to every client during the `initialize` handshake, via `McpServer`'s `instructions` option. Unlike a tool description, which is only visible when that specific tool is being considered, server instructions are always in context for the calling LLM once connected.

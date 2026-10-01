@@ -126,7 +126,7 @@ function toCompactRef(raw: unknown): CompactRef | null {
   return { id: idString(r.id), name: str(r.name) };
 }
 
-function toCompactIngredient(raw: Record<string, unknown>): CompactIngredient {
+export function toCompactIngredient(raw: Record<string, unknown>): CompactIngredient {
   return {
     referenceId: idString(raw.referenceId),
     quantity: typeof raw.quantity === 'number' ? raw.quantity : null,
@@ -140,7 +140,7 @@ function toCompactIngredient(raw: Record<string, unknown>): CompactIngredient {
   };
 }
 
-function toCompactInstruction(raw: Record<string, unknown>): CompactInstruction {
+export function toCompactInstruction(raw: Record<string, unknown>): CompactInstruction {
   const id = str(raw.id);
   return {
     ...(id ? { id } : {}),

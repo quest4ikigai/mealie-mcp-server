@@ -28,6 +28,12 @@ import {
   INGREDIENT_PARSING_MAX_LIMIT,
   INGREDIENT_PARSING_DEFAULT_STATE,
 } from '../lib/recipe-ingredient-parsing.js';
+import {
+  getRecipesForDataEnrichment,
+  ENRICHMENT_DEFAULT_LIMIT,
+  ENRICHMENT_MAX_LIMIT,
+  ENRICHMENT_DIMENSIONS,
+} from '../lib/recipe-enrichment.js';
 
 const taxonomyModeSchema = z
   .enum(['merge', 'replace'])
@@ -598,6 +604,72 @@ export function registerRecipeTools(server: McpServer) {
     async ({ cursor, limit, state }) => {
       try {
         const result = await getRecipesForIngredientParsing({ cursor, limit, state });
+        return successResponse(result);
+      } catch (error) {
+        return errorResponse(error);
+      }
+    },
+  );
+
+  // @endpoints GET /api/recipes, GET /api/recipes/{slug}
+  server.tool(
+    'get_recipes_for_data_enrichment',
+    'Paginated, READ-ONLY, holistic work queue of recipes that may benefit from data enrichment across several ' +
+      'dimensions at once: "ingredient_parsing" (at least one ingredient has no associated food), ' +
+      '"ingredient_sections" (ingredients exist but no ingredient row carries a section title), ' +
+      '"instruction_ingredient_links" (instructions exist but no step references an ingredient, or a reference ' +
+      'matches no ingredient referenceId), "tools" (recipe has zero Tools), "taxonomy" (zero categories or zero ' +
+      'tags), and "image" (no image set). It reports deterministic, schema-only FACTS: each item carries recipe ' +
+      'context (name, description, times, yield, categories, tags, tools, compact ingredients with parsingState, ' +
+      'instructions with ingredientReferences), an "audit" of counts/presence flags, and "flaggedDimensions" ' +
+      '(selected dimensions whose facts are flagged). A flag is NOT a verdict: whether a recipe actually needs a ' +
+      'Tool, how ingredients should be sectioned, which references are semantically correct, whether taxonomy ' +
+      'should change, or whether image enrichment should run is entirely the calling model\'s decision. Use ' +
+      '"dimensions" to select which dimensions both filter and populate flaggedDimensions (default: all); a recipe ' +
+      'is returned when at least one selected dimension is flagged, or always when onlyFlagged is false (audit ' +
+      'mode). Every scanned recipe is fully fetched with bounded concurrency; a failure reading one recipe is ' +
+      'reported in failures and does not fail the page. returnedCount can be below limit while hasMore is true ' +
+      'if the internal time budget is reached first — expected, not an error. Pass nextCursor back unchanged to ' +
+      'continue until hasMore is false; pagination is stable against concurrent edits. Apply decisions with the ' +
+      'existing write tools (update_recipe_ingredients, update_recipe_instructions, update_recipe_tools, ' +
+      'update_recipe_taxonomy, set_recipe_image*). Instruction ids are not stable across writes.',
+    {
+      cursor: z
+        .string()
+        .optional()
+        .describe(
+          'Opaque continuation token from a previous call\'s nextCursor. Pass it back unchanged; omit it to start ' +
+            'from the beginning. Malformed or foreign cursors are rejected with a clear error.',
+        ),
+      limit: z
+        .number()
+        .int(`limit must be between 1 and ${ENRICHMENT_MAX_LIMIT}.`)
+        .min(1, `limit must be between 1 and ${ENRICHMENT_MAX_LIMIT}.`)
+        .max(ENRICHMENT_MAX_LIMIT, `limit must be between 1 and ${ENRICHMENT_MAX_LIMIT}.`)
+        .optional()
+        .describe(`Maximum recipes to return (1-${ENRICHMENT_MAX_LIMIT}, default ${ENRICHMENT_DEFAULT_LIMIT}).`),
+      dimensions: z
+        .array(z.enum(ENRICHMENT_DIMENSIONS))
+        .min(1, 'dimensions must contain at least one dimension.')
+        .optional()
+        .describe('Enrichment dimensions to filter and report on (default: all).'),
+      onlyFlagged: z
+        .boolean()
+        .optional()
+        .describe(
+          'Default true: return only recipes with at least one flagged selected dimension. Set false to return ' +
+            'every scanned recipe with its audit (useful for auditing).',
+        ),
+    },
+    {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+    async ({ cursor, limit, dimensions, onlyFlagged }) => {
+      try {
+        const result = await getRecipesForDataEnrichment({ cursor, limit, dimensions, onlyFlagged });
         return successResponse(result);
       } catch (error) {
         return errorResponse(error);
