@@ -93,6 +93,21 @@ describe('scanAuditedRecipes', () => {
     expect(decodeCursor(result.nextCursor ?? '').lastId).toBe('id2');
   });
 
+  it('treats an empty detail response as a per-recipe failure', async () => {
+    mockedGetRecipe.mockImplementation((slug: string) =>
+      Promise.resolve((slug === 's1' ? null : { id: slug, slug, tools: [] }) as never),
+    );
+    const result = await scanAuditedRecipes({
+      startCursor: null,
+      limit: 5,
+      matches: () => true,
+      toItem: (d) => String(d.slug),
+    });
+    expect(result.items).toEqual(['s2', 's3']);
+    expect(result.failures).toHaveLength(1);
+    expect(result.failures[0]).toMatchObject({ slug: 's1', id: 'id1' });
+  });
+
   it('reports exhaustion with no cursor', async () => {
     mockedGetRecipe.mockResolvedValue({ tools: [{}] });
     const result = await scanAuditedRecipes({ startCursor: null, limit: 5, matches: () => false, toItem: () => 1 });
