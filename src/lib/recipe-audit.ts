@@ -194,7 +194,7 @@ export async function fetchRecipeDetail(entry: ScannedRecipe): Promise<DetailFet
   const slug = str(entry.summary.slug) || entry.id;
   try {
     const detail = await recipesApi.getRecipe(slug);
-    if (!detail || typeof detail !== 'object') {
+    if (!detail || typeof detail !== 'object' || Array.isArray(detail)) {
       return { success: false, slug: slug || undefined, id: entry.id || undefined, error: 'Recipe detail response was empty or invalid' };
     }
     return { success: true, detail };

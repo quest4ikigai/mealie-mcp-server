@@ -93,9 +93,9 @@ describe('scanAuditedRecipes', () => {
     expect(decodeCursor(result.nextCursor ?? '').lastId).toBe('id2');
   });
 
-  it('treats an empty detail response as a per-recipe failure', async () => {
+  it.each([null, []])('treats an invalid detail response (%j) as a per-recipe failure', async (bad) => {
     mockedGetRecipe.mockImplementation((slug: string) =>
-      Promise.resolve((slug === 's1' ? null : { id: slug, slug, tools: [] }) as never),
+      Promise.resolve((slug === 's1' ? bad : { id: slug, slug, tools: [] }) as never),
     );
     const result = await scanAuditedRecipes({
       startCursor: null,
