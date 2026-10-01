@@ -18,6 +18,7 @@ const EXISTING_RECIPE_TOOLS = [
   'update_recipe_tools',
   'duplicate_recipe',
   'mark_recipe_last_made',
+  'set_recipe_image',
   'set_recipe_image_from_url',
   'delete_recipe',
 ];

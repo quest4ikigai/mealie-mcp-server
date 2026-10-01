@@ -2,7 +2,7 @@
 
 | Category | Tools |
 |---|---|
-| Recipes | 22 |
+| Recipes | 23 |
 | Meal Plans | 6 |
 | Categories | 7 |
 | Tags | 7 |
@@ -10,9 +10,9 @@
 | Foods | 6 |
 | Units | 6 |
 | Tools | 6 |
-| **Total** | **73** |
+| **Total** | **74** |
 
-## Recipes Operations (22)
+## Recipes Operations (23)
 
 - `create_recipe` — POST /api/recipes, PUT /api/recipes/{slug}
   Creates a new recipe. Optionally sets ingredients and instructions on creation.
@@ -65,6 +65,10 @@
 - `patch_recipe` — GET /api/recipes/{slug}, PATCH /api/recipes/{slug}
   Partially updates a recipe. Also accepts optional categories/tags/taxonomyMode/createMissing for taxonomy assignment. Unchanged Category/Tag collections are never written; if taxonomy is the only thing requested and nothing changes, no PATCH is issued and the current recipe is returned with taxonomyChanges.
   Params: `slug`, `name`, `description`, `recipeYield`, `totalTime`, `categories`, `tags`, `taxonomyMode`, `createMissing`
+
+- `set_recipe_image` — PUT /api/recipes/{slug}/image, DELETE /api/recipes/{slug}/image
+  Sets, replaces, or deletes a recipe's image. Pass `imageBase64` as base64-encoded PNG, JPEG, WebP, or GIF data (max 10 MB; a data: URI prefix is accepted) to upload or replace the image, or pass `null` to delete the existing image. Input is validated before anything is sent to Mealie, and no other recipe fields are touched. `extension` is optional; the format is detected from the data, and a mismatching extension is rejected. To set an image from a URL instead, use `set_recipe_image_from_url`.
+  Params: `slug`, `imageBase64`, `extension`
 
 - `set_recipe_image_from_url` — POST /api/recipes/{slug}/image
   Sets a recipe's image from a URL.

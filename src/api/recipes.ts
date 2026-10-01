@@ -1,4 +1,4 @@
-import { apiGet, apiPost, apiPatch, apiPut, apiDelete, buildQueryString, PaginatedResult, encodePathSegment } from './client.js';
+import { apiGet, apiPost, apiPatch, apiPut, apiPutForm, apiDelete, buildQueryString, PaginatedResult, encodePathSegment } from './client.js';
 import { mapWithConcurrency, DEFAULT_DETAIL_FETCH_CONCURRENCY } from '../lib/concurrency.js';
 
 
@@ -91,6 +91,22 @@ export async function setRecipeImageFromUrl(
   url: string,
 ): Promise<Record<string, unknown>> {
   return apiPost(`/api/recipes/${encodePathSegment(slug, 'slug')}/image`, { url });
+}
+
+// PUT /api/recipes/{slug}/image takes multipart form data: `image` (file bytes) and `extension`.
+export async function uploadRecipeImage(
+  slug: string,
+  image: Uint8Array<ArrayBuffer>,
+  extension: string,
+): Promise<Record<string, unknown>> {
+  const form = new FormData();
+  form.append('image', new Blob([image]), `image.${extension}`);
+  form.append('extension', extension);
+  return apiPutForm(`/api/recipes/${encodePathSegment(slug, 'slug')}/image`, form);
+}
+
+export async function deleteRecipeImage(slug: string): Promise<Record<string, unknown>> {
+  return apiDelete(`/api/recipes/${encodePathSegment(slug, 'slug')}/image`);
 }
 
 export async function deleteRecipe(slug: string): Promise<Record<string, unknown>> {
