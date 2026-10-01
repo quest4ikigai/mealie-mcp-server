@@ -43,7 +43,7 @@ export function isPrivateAddress(ip: string): boolean {
       lower === '::1' ||
       lower.startsWith('fc') ||
       lower.startsWith('fd') ||
-      /^fe[89ab]/.test(lower) ||
+      /^fe[89abcdef]/.test(lower) ||
       lower.startsWith('::ffff:')
     );
   }
