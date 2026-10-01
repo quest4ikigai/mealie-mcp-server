@@ -30,9 +30,11 @@ A recipe that matches the filter but fails its detail fetch (see `failures` in t
 
 The same module owns the shared scan machinery on top of `scanRecipesStable`: `scanAuditedRecipes` (detail-fetch every scanned recipe in bounded concurrent batches, audit it, collect matches until the limit or soft deadline), `fetchRecipeDetail` (per-recipe failure isolation), and `nextCursorFor`. `get_recipes_for_ingredient_parsing` uses `scanAuditedRecipes`; `get_recipes_for_classification` still pre-filters from the list summary via `auditTaxonomy` and only fetches detail for returned recipes. Public inputs, outputs, and cursors of both tools are unchanged. A future holistic enrichment queue should combine `RecipeEnrichmentAudit` facts through the same helpers rather than re-deriving them.
 
+`get_recipes_for_data_enrichment` (`src/lib/recipe-enrichment.ts`) is a thin layer over `scanAuditedRecipes`: its filter predicates read only `RecipeEnrichmentAudit` facts (no audit logic is re-derived), explicit `filters` replace `DEFAULT_ENRICHMENT_FILTERS` rather than merging, and `matchedDimensions` is computed from the same predicates. It reuses the shared cursor, ordering (createdAt asc, id tie-break), soft deadline, and per-recipe failure isolation.
+
 ## Debugging
 
-Set `MEALIE_MCP_DEBUG=true` in the server's environment to log per-call phase timings (scan/list, detail fetch, transform) for `get_recipes_for_classification` and `get_recipes_for_ingredient_parsing` to stderr — useful for telling whether a slow call is spending its time listing recipes, fetching detail, or building the response. Diagnostics always go to stderr, never stdout, since stdout carries the MCP JSON-RPC transport.
+Set `MEALIE_MCP_DEBUG=true` in the server's environment to log per-call phase timings (scan/list, detail fetch, transform) for `get_recipes_for_classification`, `get_recipes_for_ingredient_parsing`, and `get_recipes_for_data_enrichment` to stderr — useful for telling whether a slow call is spending its time listing recipes, fetching detail, or building the response. Diagnostics always go to stderr, never stdout, since stdout carries the MCP JSON-RPC transport.
 
 ## Known Mealie API Quirks
 
