@@ -24,6 +24,12 @@ This gives two guarantees:
 
 A recipe that matches the filter but fails its detail fetch (see `failures` in the response) is not retried automatically by continuing pagination — retry it directly (e.g. with `get_recipe_detailed`) once the failure is addressed.
 
+## Shared Recipe Enrichment Audit Model
+
+`src/lib/recipe-audit.ts` is the single place where recipe schema state is turned into facts. `auditRecipe(detail)` returns counts and presence flags only — ingredient parsing states (structured/partial/unparsed/section), instruction step/reference/section counts (including references that match no ingredient `referenceId`), tool, category and tag counts, and whether an image is set. It never interprets text: whether a recipe *should* have a whisk, or whether a tag is correct, is left to the calling model.
+
+The same module owns the shared scan machinery on top of `scanRecipesStable`: `scanAuditedRecipes` (detail-fetch every scanned recipe in bounded concurrent batches, audit it, collect matches until the limit or soft deadline), `fetchRecipeDetail` (per-recipe failure isolation), and `nextCursorFor`. `get_recipes_for_ingredient_parsing` uses `scanAuditedRecipes`; `get_recipes_for_classification` still pre-filters from the list summary via `auditTaxonomy` and only fetches detail for returned recipes. Public inputs, outputs, and cursors of both tools are unchanged. A future holistic enrichment queue should combine `RecipeEnrichmentAudit` facts through the same helpers rather than re-deriving them.
+
 ## Debugging
 
 Set `MEALIE_MCP_DEBUG=true` in the server's environment to log per-call phase timings (scan/list, detail fetch, transform) for `get_recipes_for_classification` and `get_recipes_for_ingredient_parsing` to stderr — useful for telling whether a slow call is spending its time listing recipes, fetching detail, or building the response. Diagnostics always go to stderr, never stdout, since stdout carries the MCP JSON-RPC transport.
@@ -87,7 +93,7 @@ This matters for rollback specifically: this writer's own pre-write `GET` (the r
 
 ## Why Ingredient Parsing Can't Pre-Filter Cheaply
 
-`get_recipes_for_classification` can filter cheaply because the list endpoint's response already embeds `recipeCategory`/`tags` for every recipe. Mealie's `/api/recipes` list response does **not** include `recipeIngredient` at all — this codebase's own `get_recipe_concise` tool has to call the full `getRecipe(slug)` and trim client-side for the same reason, since there is no server-side field-selection/projection param. That means `get_recipes_for_ingredient_parsing` genuinely needs a detail fetch for every scanned recipe, not just matches — fetched in small batches (`DETAIL_FETCH_BATCH_SIZE`, `src/lib/recipe-ingredient-parsing.ts`) with the same bounded concurrency as everything else, rather than loading the whole collection into memory or firing every request at once.
+`get_recipes_for_classification` can filter cheaply because the list endpoint's response already embeds `recipeCategory`/`tags` for every recipe. Mealie's `/api/recipes` list response does **not** include `recipeIngredient` at all — this codebase's own `get_recipe_concise` tool has to call the full `getRecipe(slug)` and trim client-side for the same reason, since there is no server-side field-selection/projection param. That means `get_recipes_for_ingredient_parsing` genuinely needs a detail fetch for every scanned recipe, not just matches — fetched in small batches (`DETAIL_FETCH_BATCH_SIZE`, `src/lib/recipe-audit.ts`) with the same bounded concurrency as everything else, rather than loading the whole collection into memory or firing every request at once.
 
 Before accepting that, two alternatives were investigated directly against a live Mealie instance's real REST API (not this server's own tools) rather than assumed away:
 
