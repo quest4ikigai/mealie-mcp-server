@@ -29,7 +29,15 @@ function ipBlocked(ip: string): boolean {
   return v6 === '::' || v6 === '::1' || /^f[cd]/.test(v6) || /^fe[89ab]/.test(v6);
 }
 
-async function assertPublicHttps(rawUrl: string): Promise<URL> {
+function rejectOnAbort(signal: AbortSignal): Promise<never> {
+  return new Promise((_, reject) => {
+    const fail = () => reject(new Error('Timed out downloading the file.'));
+    if (signal.aborted) fail();
+    else signal.addEventListener('abort', fail, { once: true });
+  });
+}
+
+async function assertPublicHttps(rawUrl: string, signal: AbortSignal): Promise<URL> {
   let url: URL;
   try {
     url = new URL(rawUrl);
@@ -41,9 +49,14 @@ async function assertPublicHttps(rawUrl: string): Promise<URL> {
   const host = url.hostname.replace(/^\[|\]$/g, '');
   const addresses = isIP(host)
     ? [host]
-    : (await lookup(host, { all: true }).catch(() => {
-        throw new Error('Could not resolve the download host.');
-      })).map((a) => a.address);
+    : (
+        await Promise.race([
+          lookup(host, { all: true }).catch(() => {
+            throw new Error('Could not resolve the download host.');
+          }),
+          rejectOnAbort(signal),
+        ])
+      ).map((a) => a.address);
   if (addresses.length === 0 || addresses.some(ipBlocked)) {
     throw new Error('download_url points to a private or internal address, which is not allowed.');
   }
@@ -60,7 +73,7 @@ export async function downloadFileBytes(rawUrl: string, maxBytes: number): Promi
   let current = rawUrl;
 
   for (let hop = 0; ; hop++) {
-    const url = await assertPublicHttps(current);
+    const url = await assertPublicHttps(current, signal);
     let res: Response;
     try {
       res = await fetch(url, { redirect: 'manual', signal });

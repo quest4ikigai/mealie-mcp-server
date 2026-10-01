@@ -33,7 +33,10 @@ beforeEach(() => {
   vi.stubGlobal('fetch', fetchMock);
   vi.mocked(recipesApi.uploadRecipeImage).mockResolvedValue({ image: 'v1' });
 });
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
 
 describe('setRecipeImageFromFile', () => {
   it.each([
@@ -75,6 +78,15 @@ describe('setRecipeImageFromFile', () => {
     await expect(setRecipeImageFromFile('soup', ref())).rejects.toThrow(/Failed to download/);
     fetchMock.mockRejectedValue(Object.assign(new Error('t'), { name: 'TimeoutError' }));
     await expect(setRecipeImageFromFile('soup', ref())).rejects.toThrow(/Timed out/);
+    expect(recipesApi.uploadRecipeImage).not.toHaveBeenCalled();
+  });
+
+  it('bounds a stalled DNS lookup with the download timeout', async () => {
+    const { lookup } = await import('node:dns/promises');
+    vi.mocked(lookup).mockImplementationOnce((() => new Promise(() => undefined)) as never);
+    vi.spyOn(AbortSignal, 'timeout').mockReturnValueOnce(AbortSignal.abort());
+    await expect(setRecipeImageFromFile('soup', ref())).rejects.toThrow(/Timed out/);
+    expect(fetchMock).not.toHaveBeenCalled();
     expect(recipesApi.uploadRecipeImage).not.toHaveBeenCalled();
   });
 
