@@ -87,6 +87,12 @@ describe('setRecipeImageFromFile', () => {
     expect(recipesApi.uploadRecipeImage).not.toHaveBeenCalled();
   });
 
+  it('applies the timeout to hostname resolution', async () => {
+    const hang = () => new Promise<string[]>(() => undefined);
+    await expect(setRecipeImageFromFile('s', file(), { resolve: hang, timeoutMs: 10 })).rejects.toThrow(/timed out/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('enforces the 10 MB boundary on streamed bytes and declared length', async () => {
     const atLimit = Buffer.concat([PNG, Buffer.alloc(RECIPE_IMAGE_MAX_BYTES - PNG.length)]);
     fetchMock.mockResolvedValueOnce(ok(atLimit));

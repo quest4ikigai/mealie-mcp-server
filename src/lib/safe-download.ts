@@ -45,7 +45,16 @@ export function isPrivateAddress(ip: string): boolean {
 }
 
 // Only public http(s) hosts may be fetched; every hop (including redirects) is re-validated.
-async function assertSafeUrl(raw: string, resolve: HostResolver): Promise<URL> {
+function raceAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(new Error('Download timed out.'));
+  return new Promise<T>((resolvePromise, reject) => {
+    const onAbort = () => reject(new Error('Download timed out.'));
+    signal.addEventListener('abort', onAbort, { once: true });
+    promise.then(resolvePromise, reject).finally(() => signal.removeEventListener('abort', onAbort));
+  });
+}
+
+async function assertSafeUrl(raw: string, resolve: HostResolver, signal: AbortSignal): Promise<URL> {
   let url: URL;
   try {
     url = new URL(raw);
@@ -59,7 +68,7 @@ async function assertSafeUrl(raw: string, resolve: HostResolver): Promise<URL> {
     throw new Error('download_url must not contain credentials.');
   }
   const host = url.hostname.replace(/^\[|\]$/g, '');
-  const addresses = isIP(host) ? [host] : await resolve(host).catch(() => []);
+  const addresses = isIP(host) ? [host] : await raceAbort(resolve(host), signal).catch(() => []);
   if (addresses.length === 0) throw new Error('download_url host could not be resolved.');
   if (addresses.some(isPrivateAddress)) {
     throw new Error('download_url points to a private or non-public address and was refused.');
@@ -107,7 +116,7 @@ export async function downloadBounded(
   let current = rawUrl;
   try {
     for (let hop = 0; hop <= DOWNLOAD_MAX_REDIRECTS; hop++) {
-      const url = await assertSafeUrl(current, resolve);
+      const url = await assertSafeUrl(current, resolve, signal);
       const res = await fetch(url, { redirect: 'manual', signal });
       if (res.status >= 300 && res.status < 400) {
         const location = res.headers.get('location');
