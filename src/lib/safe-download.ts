@@ -26,7 +26,7 @@ function ipBlocked(ip: string): boolean {
   const mapped = v6.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
   if (mapped) return ipv4Blocked(mapped[1]);
   if (v6.startsWith('::ffff:')) return true;
-  return v6 === '::' || v6 === '::1' || /^f[cd]/.test(v6) || /^fe[89ab]/.test(v6);
+  return v6 === '::' || v6 === '::1' || /^f[cd]/.test(v6) || /^fe[89abcdef]/.test(v6) || /^ff/.test(v6);
 }
 
 function rejectOnAbort(signal: AbortSignal): Promise<never> {

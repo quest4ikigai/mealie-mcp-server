@@ -126,6 +126,8 @@ describe('setRecipeImageFromFile', () => {
     'http://files.example.com/a',
     'https://127.0.0.1/a',
     'https://[::1]/a',
+    'https://[ff02::1]/a',
+    'https://[fec0::1]/a',
     'https://169.254.169.254/latest',
     'https://192.168.1.1/a',
     'https://[::ffff:10.0.0.1]/a',
