@@ -1,4 +1,5 @@
 import * as recipesApi from '../api/recipes.js';
+import { downloadFileBytes } from './safe-download.js';
 
 export const RECIPE_IMAGE_MAX_BYTES = 10 * 1024 * 1024;
 
@@ -37,6 +38,15 @@ export function decodeRecipeImage(
   const bytes = new Uint8Array(buffer.length);
   bytes.set(buffer);
   if (bytes.length === 0) throw new Error('imageBase64 decoded to an empty image.');
+  return validateRecipeImageBytes(bytes, extension);
+}
+
+// Shared size + magic-byte policy for every upload path. Magic bytes are authoritative; an
+// explicit extension hint that disagrees with them is rejected.
+export function validateRecipeImageBytes(
+  bytes: Uint8Array<ArrayBuffer>,
+  extension?: string,
+): { bytes: Uint8Array<ArrayBuffer>; extension: ImageExtension } {
   if (bytes.length > RECIPE_IMAGE_MAX_BYTES) {
     throw new Error(`Image exceeds the ${RECIPE_IMAGE_MAX_BYTES / (1024 * 1024)} MB limit.`);
   }
@@ -62,4 +72,26 @@ export async function setRecipeImage(
   }
   const { bytes, extension: ext } = decodeRecipeImage(imageBase64, extension);
   return recipesApi.uploadRecipeImage(slug, bytes, ext);
+}
+
+export interface RecipeImageFileReference {
+  download_url: string;
+  file_id: string;
+  mime_type?: string;
+  file_name?: string;
+}
+
+// Downloads the host-provided temporary file and uploads it. `mime_type` and `file_name` are
+// ignored for format identity: only the downloaded bytes decide. Nothing reaches Mealie unless
+// the download succeeds and validates.
+export async function setRecipeImageFromFile(
+  slug: string,
+  file: RecipeImageFileReference,
+): Promise<Record<string, unknown>> {
+  const raw = await downloadFileBytes(file.download_url, RECIPE_IMAGE_MAX_BYTES);
+  const bytes = new Uint8Array(raw.length);
+  bytes.set(raw);
+  if (bytes.length === 0) throw new Error('Downloaded file is empty.');
+  const { extension } = validateRecipeImageBytes(bytes);
+  return recipesApi.uploadRecipeImage(slug, bytes, extension);
 }

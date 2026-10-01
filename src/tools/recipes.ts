@@ -4,7 +4,7 @@ import * as recipesApi from '../api/recipes.js';
 import { buildTaxonomyPatch, updateRecipeTaxonomy, updateRecipeTaxonomyBatch } from '../lib/recipe-taxonomy.js';
 import { updateRecipeTools, updateRecipeToolsBatch, RECIPE_TOOLS_BATCH_MAX_SIZE } from '../lib/recipe-tools.js';
 import { resolveTaxonomyFilter } from '../lib/taxonomy-resolution.js';
-import { setRecipeImage } from '../lib/recipe-image.js';
+import { setRecipeImage, setRecipeImageFromFile } from '../lib/recipe-image.js';
 import { findRecipesForIngredients } from '../lib/find-recipes-for-ingredients.js';
 import {
   getRecipesForClassification,
@@ -1061,6 +1061,32 @@ export function registerRecipeTools(server: McpServer) {
       }
     },
   );
+
+  // @endpoints PUT /api/recipes/{slug}/image
+  server.tool(
+    'set_recipe_image_from_file',
+    'Sets or replaces a recipe\'s image from a host-provided file reference (a temporary `download_url`), without passing image data through the model. The server downloads the file (HTTPS only, max 10 MB, redirects re-validated, private/internal addresses refused), detects PNG, JPEG, WebP, or GIF from the bytes (`mime_type` and `file_name` are only hints and are never trusted), and uploads it; nothing is sent to Mealie unless validation passes. No other recipe fields are touched. File-parameter support is host-dependent (advertised via the optional `openai/fileParams` extension); prefer this tool when the host supplies a file reference, `set_recipe_image_from_url` for a remotely fetchable URL, and `set_recipe_image` with base64 as the portable fallback. To delete an image use `set_recipe_image` with `null`.',
+    {
+      slug: z.string(),
+      file: z
+        .object({
+          download_url: z.string().describe('Temporary URL the server downloads the file from.'),
+          file_id: z.string().describe('Host identifier for the file.'),
+          mime_type: z.string().optional().describe('Optional MIME type hint; not trusted.'),
+          file_name: z.string().optional().describe('Optional file name hint; not trusted.'),
+        })
+        .describe('Host-provided file reference.'),
+    },
+    async ({ slug, file }) => {
+      try {
+        const result = await setRecipeImageFromFile(slug, file);
+        return successResponse(result);
+      } catch (error) {
+        return errorResponse(error);
+      }
+    },
+    // Optional OpenAI host extension: tells ChatGPT to bind a file to `file`. Other clients ignore it.
+  )?.update?.({ _meta: { 'openai/fileParams': ['file'] } });
 
   // @endpoints POST /api/recipes/{slug}/image
   server.tool(

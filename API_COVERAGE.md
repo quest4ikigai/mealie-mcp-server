@@ -2,7 +2,7 @@
 
 | Category | Tools |
 |---|---|
-| Recipes | 23 |
+| Recipes | 24 |
 | Meal Plans | 6 |
 | Categories | 7 |
 | Tags | 7 |
@@ -10,9 +10,9 @@
 | Foods | 6 |
 | Units | 6 |
 | Tools | 6 |
-| **Total** | **74** |
+| **Total** | **75** |
 
-## Recipes Operations (23)
+## Recipes Operations (24)
 
 - `create_recipe` — POST /api/recipes, PUT /api/recipes/{slug}
   Creates a new recipe. Optionally sets ingredients and instructions on creation.
@@ -69,6 +69,10 @@
 - `set_recipe_image` — PUT /api/recipes/{slug}/image, DELETE /api/recipes/{slug}/image
   Sets, replaces, or deletes a recipe's image. Pass `imageBase64` as base64-encoded PNG, JPEG, WebP, or GIF data (max 10 MB; a data: URI prefix is accepted) to upload or replace the image, or pass `null` to delete the existing image. Input is validated before anything is sent to Mealie, and no other recipe fields are touched. `extension` is optional; the format is detected from the data, and a mismatching extension is rejected. To set an image from a URL instead, use `set_recipe_image_from_url`.
   Params: `slug`, `imageBase64`, `extension`
+
+- `set_recipe_image_from_file` — PUT /api/recipes/{slug}/image
+  Sets or replaces a recipe's image from a host-provided file reference (a temporary `download_url`), without passing image data through the model. The server downloads the file (HTTPS only, max 10 MB, redirects re-validated, private/internal addresses refused), detects PNG, JPEG, WebP, or GIF from the bytes (`mime_type` and `file_name` are only hints and are never trusted), and uploads it; nothing is sent to Mealie unless validation passes. No other recipe fields are touched. File-parameter support is host-dependent (advertised via the optional `openai/fileParams` extension); prefer this tool when the host supplies a file reference, `set_recipe_image_from_url` for a remotely fetchable URL, and `set_recipe_image` with base64 as the portable fallback. To delete an image use `set_recipe_image` with `null`.
+  Params: `slug`, `file`
 
 - `set_recipe_image_from_url` — POST /api/recipes/{slug}/image
   Sets a recipe's image from a URL.
