@@ -1,4 +1,5 @@
 import * as recipesApi from '../api/recipes.js';
+import { downloadBounded, type HostResolver } from './safe-download.js';
 
 export const RECIPE_IMAGE_MAX_BYTES = 10 * 1024 * 1024;
 
@@ -24,6 +25,18 @@ function normalizeExtension(ext: string): string {
   return e === 'jpeg' ? 'jpg' : e;
 }
 
+// Shared size + magic-byte policy for every upload path.
+function validateImageBytes(bytes: Uint8Array): ImageExtension {
+  if (bytes.length > RECIPE_IMAGE_MAX_BYTES) {
+    throw new Error(`Image exceeds the ${RECIPE_IMAGE_MAX_BYTES / (1024 * 1024)} MB limit.`);
+  }
+  const detected = detectExtension(bytes);
+  if (!detected) {
+    throw new Error('Unsupported image data: expected PNG, JPEG, WebP, or GIF.');
+  }
+  return detected;
+}
+
 export function decodeRecipeImage(
   imageBase64: string,
   extension?: string,
@@ -37,13 +50,7 @@ export function decodeRecipeImage(
   const bytes = new Uint8Array(buffer.length);
   bytes.set(buffer);
   if (bytes.length === 0) throw new Error('imageBase64 decoded to an empty image.');
-  if (bytes.length > RECIPE_IMAGE_MAX_BYTES) {
-    throw new Error(`Image exceeds the ${RECIPE_IMAGE_MAX_BYTES / (1024 * 1024)} MB limit.`);
-  }
-  const detected = detectExtension(bytes);
-  if (!detected) {
-    throw new Error('Unsupported image data: expected PNG, JPEG, WebP, or GIF.');
-  }
+  const detected = validateImageBytes(bytes);
   if (extension !== undefined && normalizeExtension(extension) !== detected) {
     throw new Error(`extension "${extension}" does not match the image data, which is ${detected}.`);
   }
@@ -61,5 +68,24 @@ export async function setRecipeImage(
     return recipesApi.deleteRecipeImage(slug);
   }
   const { bytes, extension: ext } = decodeRecipeImage(imageBase64, extension);
+  return recipesApi.uploadRecipeImage(slug, bytes, ext);
+}
+
+export interface RecipeImageFileRef {
+  download_url: string;
+  file_id: string;
+  mime_type?: string;
+  file_name?: string;
+}
+
+// The downloaded bytes are authoritative: mime_type and file_name are never used to pick the format.
+export async function setRecipeImageFromFile(
+  slug: string,
+  file: RecipeImageFileRef,
+  options: { timeoutMs?: number; resolve?: HostResolver } = {},
+): Promise<Record<string, unknown>> {
+  const bytes = await downloadBounded(file.download_url, RECIPE_IMAGE_MAX_BYTES, options);
+  if (bytes.length === 0) throw new Error('Downloaded file is empty.');
+  const ext = validateImageBytes(bytes);
   return recipesApi.uploadRecipeImage(slug, bytes, ext);
 }
