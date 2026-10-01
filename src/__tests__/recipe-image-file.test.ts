@@ -143,10 +143,10 @@ describe('setRecipeImageFromFile', () => {
   });
 
   it('classifies addresses', () => {
-    for (const ip of ['10.1.1.1', '192.168.0.1', '172.16.0.1', '169.254.1.1', '::1', 'fd00::1', 'fe80::1', 'fec0::1', '::ffff:127.0.0.1']) {
+    for (const ip of ['10.1.1.1', '192.168.0.1', '172.16.0.1', '169.254.1.1', '::1', 'fd00::1', 'fe80::1', 'fec0::1', '::ffff:127.0.0.1', '64:ff9b:1::1', '100::1', '2001:db8::1', 'ff02::1', '2002:7f00:1::1', '2001::1', '3fff::1']) {
       expect(isPrivateAddress(ip)).toBe(true);
     }
-    for (const ip of ['93.184.216.34', '2606:2800:220:1::1']) expect(isPrivateAddress(ip)).toBe(false);
+    for (const ip of ['93.184.216.34', '2606:2800:220:1::1', '2a00:1450:4001::1']) expect(isPrivateAddress(ip)).toBe(false);
   });
 });
 

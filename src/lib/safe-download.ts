@@ -38,14 +38,15 @@ export function isPrivateAddress(ip: string): boolean {
     const lower = ip.toLowerCase();
     const mapped = lower.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
     if (mapped) return isPrivateIPv4(mapped[1]);
-    return (
-      lower === '::' ||
-      lower === '::1' ||
-      lower.startsWith('fc') ||
-      lower.startsWith('fd') ||
-      /^fe[89abcdef]/.test(lower) ||
-      lower.startsWith('::ffff:')
-    );
+    // Allowlist global unicast (2000::/3) minus special-use ranges; everything else is non-public.
+    const groups = lower.split(':');
+    const first = parseInt(groups[0] || '0', 16);
+    const second = parseInt(groups[1] || '0', 16);
+    if (first < 0x2000 || first > 0x3fff) return true;
+    if (first === 0x2001 && (second < 0x200 || second === 0xdb8)) return true; // 2001::/23, 2001:db8::/32
+    if (first === 0x2002) return true; // 6to4 (embeds IPv4)
+    if (first === 0x3fff && second < 0x1000) return true; // 3fff::/20 documentation
+    return false;
   }
   return true;
 }
@@ -115,6 +116,11 @@ export const pinnedTransport: PinnedTransport = (url, address, signal) =>
         const headers = new Headers();
         for (let i = 0; i < res.rawHeaders.length; i += 2) headers.append(res.rawHeaders[i], res.rawHeaders[i + 1]);
         const status = res.statusCode ?? 0;
+        if (status < 200 || status > 599) {
+          res.destroy();
+          reject(new Error(`Download failed: source responded with unsupported HTTP status ${status}.`));
+          return;
+        }
         const nullBody = status === 204 || status === 205 || status === 304;
         resolvePromise(
           new Response(nullBody ? null : (Readable.toWeb(res) as unknown as ReadableStream<Uint8Array>), {
