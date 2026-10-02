@@ -2,16 +2,17 @@
 
 | Category | Tools |
 |---|---|
-| Recipes | 18 |
+| Recipes | 20 |
 | Meal Plans | 6 |
 | Categories | 7 |
 | Tags | 7 |
 | Shopping Lists | 13 |
 | Foods | 6 |
 | Units | 6 |
-| **Total** | **63** |
+| Tools | 6 |
+| **Total** | **71** |
 
-## Recipes Operations (18)
+## Recipes Operations (20)
 
 - `create_recipe` — POST /api/recipes, PUT /api/recipes/{slug}
   Creates a new recipe. Optionally sets ingredients and instructions on creation.
@@ -74,6 +75,12 @@
 
 - `update_recipe_taxonomy_batch` — GET /api/organizers/categories, POST /api/organizers/categories, GET /api/organizers/tags, POST /api/organizers/tags, GET /api/recipes/{slug}, PATCH /api/recipes/{slug}
   Runs update_recipe_taxonomy for multiple recipes with bounded concurrency (5 at a time), returning a 
+
+- `update_recipe_tools` — GET /api/recipes/{slug}, GET /api/organizers/tools, POST /api/organizers/tools, PATCH /api/recipes/{slug}
+  Assigns Mealie Tool organizers (equipment, e.g. "Whisk", "Sheet Pan") to one existing recipe. You decide which 
+
+- `update_recipe_tools_batch` — GET /api/recipes/{slug}, GET /api/organizers/tools, POST /api/organizers/tools, PATCH /api/recipes/{slug}
+  Applies update_recipe_tools to several recipes in one call. Each update accepts the same legacy (tools + 
 
 ## Meal Plans Operations (6)
 
@@ -242,4 +249,25 @@
   Search or list canonical Mealie ingredient units (e.g. "tablespoon", "cup", "gram") with plain pagination. 
 
 - `update_unit` — GET /api/units/{id}, PUT /api/units/{id}
-  Updates an existing canonical Mealie ingredient unit. Fields left unspecified keep their current value.
+  Updates an existing canonical Mealie ingredient unit. Fields left unspecified keep their current value. 
+
+## Tools Operations (6)
+
+- `create_tool` — POST /api/organizers/tools
+  Creates a canonical Mealie Tool organizer when no appropriate one exists. Call get_tool_matches first to 
+
+- `delete_tool` — DELETE /api/organizers/tools/{id}
+  DESTRUCTIVE and irreversible: permanently deletes a Mealie Tool organizer. Use get_tool first to verify 
+
+- `get_tool` — GET /api/organizers/tools/{id}
+  Retrieves a single Mealie Tool organizer by ID, including metadata such as householdsWithTool when present.
+  Params: `toolId`
+
+- `get_tool_matches` — GET /api/organizers/tools (with queryFilter)
+  Finds existing canonical Mealie Tool organizer candidates for multiple equipment names in one call, 
+
+- `get_tools` — GET /api/organizers/tools
+  Search or list canonical Mealie Tool organizers (kitchen equipment, e.g. "Whisk", "Sheet Pan") with plain 
+
+- `update_tool` — GET /api/organizers/tools/{id}, PUT /api/organizers/tools/{id}
+  Renames an existing Mealie Tool organizer. Reads the current Tool first and carries forward its existing

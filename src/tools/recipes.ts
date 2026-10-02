@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import * as recipesApi from '../api/recipes.js';
 import { buildTaxonomyPatch, updateRecipeTaxonomy, updateRecipeTaxonomyBatch } from '../lib/recipe-taxonomy.js';
+import { updateRecipeTools, updateRecipeToolsBatch, RECIPE_TOOLS_BATCH_MAX_SIZE } from '../lib/recipe-tools.js';
 import { resolveTaxonomyFilter } from '../lib/taxonomy-resolution.js';
 import { findRecipesForIngredients } from '../lib/find-recipes-for-ingredients.js';
 import {
@@ -125,6 +126,47 @@ function errorResponse(error: unknown) {
     content: [{ type: 'text' as const, text: error instanceof Error ? error.message : String(error) }],
     isError: true,
   };
+}
+
+const toolValueSchema = z.array(z.string().trim().min(1, 'Tool values must not be blank.'));
+
+function updateRecipeToolsMutationFields() {
+  return {
+    tools: toolValueSchema
+      .optional()
+      .describe(
+        'Legacy form: tools to assign, each a name, slug, or ID of a Mealie Tool organizer. An empty array is a ' +
+          'no-op in merge mode, but with mode "replace" it DESTRUCTIVELY clears all tools from the recipe. Cannot ' +
+          'be combined with add/remove.',
+      ),
+    mode: z
+      .enum(['merge', 'replace'])
+      .optional()
+      .describe(
+        'Only for the tools form. merge (default) adds to existing tools; replace sets exactly the given list and ' +
+          'removes all others.',
+      ),
+    add: toolValueSchema
+      .optional()
+      .describe('Delta form: tools to add (name, slug, or ID). Cannot be combined with tools/mode.'),
+    remove: toolValueSchema
+      .optional()
+      .describe(
+        'Delta form: tools to remove (name, slug, or ID). Must already exist as Tool organizers — never created. ' +
+          'Cannot be combined with tools/mode, and cannot overlap add.',
+      ),
+    createMissing: z
+      .boolean()
+      .optional()
+      .describe(
+        'When true, tools from tools/add that do not exist are created using the requested value as the name. ' +
+          'Default false: unknown values fail the call and are all listed.',
+      ),
+  };
+}
+
+function updateRecipeToolsFields() {
+  return { slug: z.string().describe('Slug of the recipe to update.'), ...updateRecipeToolsMutationFields() };
 }
 
 export function registerRecipeTools(server: McpServer) {
@@ -639,6 +681,64 @@ export function registerRecipeTools(server: McpServer) {
     async ({ updates }) => {
       try {
         const result = await updateRecipeTaxonomyBatch(updates);
+        return successResponse(result);
+      } catch (error) {
+        return errorResponse(error);
+      }
+    },
+  );
+
+  // @endpoints GET /api/recipes/{slug}, GET /api/organizers/tools, POST /api/organizers/tools, PATCH /api/recipes/{slug}
+  server.tool(
+    'update_recipe_tools',
+    'Assigns Mealie Tool organizers (equipment, e.g. "Whisk", "Sheet Pan") to one existing recipe. You decide which ' +
+      'tools the recipe needs; this tool only resolves them deterministically (exact ID, then slug, then name, ' +
+      'case-insensitive — no fuzzy matching or substitution) and persists them, PATCHing only the recipe\'s tools ' +
+      'field. Two mutually exclusive forms: (1) tools + mode — "merge" (default) keeps existing assignments, ' +
+      '"replace" sets the complete collection and DESTRUCTIVELY clears all assigned tools when tools is an empty ' +
+      'array; (2) add and/or remove — a delta computed as current - remove + add, leaving every other assigned ' +
+      'tool untouched. Unknown tools fail the call before any recipe write unless createMissing is true, which ' +
+      'creates values from tools/add (never from remove); if a later creation or the recipe write then fails, any ' +
+      'Tool organizers already created remain (no rollback). The same tool in both add and remove is rejected, ' +
+      'and a call that changes nothing skips the recipe write.',
+    updateRecipeToolsFields(),
+    async ({ slug, tools, mode, add, remove, createMissing }) => {
+      try {
+        const result = await updateRecipeTools(slug, { tools, mode, add, remove, createMissing });
+        return successResponse(result);
+      } catch (error) {
+        return errorResponse(error);
+      }
+    },
+  );
+
+  // @endpoints GET /api/recipes/{slug}, GET /api/organizers/tools, POST /api/organizers/tools, PATCH /api/recipes/{slug}
+  server.tool(
+    'update_recipe_tools_batch',
+    'Applies update_recipe_tools to several recipes in one call. Each update accepts the same legacy (tools + ' +
+      'mode) or delta (add/remove) contract as the singular tool, with the same deterministic ID/slug/name ' +
+      'resolution — you decide which tools each recipe needs. Recipes are processed independently with bounded ' +
+      'concurrency (5 at a time), results are returned in input order with per-recipe success/error plus ' +
+      'requested/succeeded/failed counts, and a failure on one recipe never stops or rolls back the others (no ' +
+      'cross-recipe transaction; Tool organizers created for a recipe that later fails remain). Organizer ' +
+      'creation via createMissing is serialized across the batch so a Tool requested by several recipes is ' +
+      'created once. createMissing still applies per entry: an entry without it may fail as missing even if ' +
+      'another entry in the same call creates that Tool, so set createMissing on every entry that names a new ' +
+      `Tool. The whole call is rejected before any write for an empty batch, more than ${RECIPE_TOOLS_BATCH_MAX_SIZE} ` +
+      'updates, a missing slug, or the same recipe slug repeated.',
+    {
+      updates: z
+        .array(z.object({ slug: z.string().describe('Slug of the recipe to update.'), ...updateRecipeToolsMutationFields() }))
+        .min(1, 'At least one recipe update is required.')
+        .max(RECIPE_TOOLS_BATCH_MAX_SIZE, `At most ${RECIPE_TOOLS_BATCH_MAX_SIZE} recipes are allowed per batch call.`)
+        .describe(
+          `One entry per recipe, each with its own tools/mode or add/remove mutation. Max ${RECIPE_TOOLS_BATCH_MAX_SIZE} ` +
+            'per call; each slug must be unique within the call.',
+        ),
+    },
+    async ({ updates }) => {
+      try {
+        const result = await updateRecipeToolsBatch(updates);
         return successResponse(result);
       } catch (error) {
         return errorResponse(error);

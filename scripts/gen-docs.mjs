@@ -109,6 +109,7 @@ const CATEGORY_ORDER = [
   'Shopping Lists',
   'Foods',
   'Units',
+  'Tools',
 ];
 
 const FILE_TO_CATEGORY = {
@@ -119,6 +120,7 @@ const FILE_TO_CATEGORY = {
   'shopping-lists.ts': 'Shopping Lists',
   'foods.ts': 'Foods',
   'units.ts': 'Units',
+  'tools.ts': 'Tools',
 };
 
 // ── collect tools from source ───────────────────────────────────────────────

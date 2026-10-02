@@ -1,22 +1,29 @@
 import * as recipesApi from '../api/recipes.js';
 import * as categoriesApi from '../api/categories.js';
 import * as tagsApi from '../api/tags.js';
+import { mapWithConcurrency } from './concurrency.js';
+import {
+  computeFinal,
+  resolveOrganizerValues,
+  toApiPayloadItem,
+  toOrganizerItem,
+  toOrganizerItems,
+  type OrganizerCollectionResult,
+  type OrganizerItem,
+  type OrganizerMode,
+  type ResolveResult,
+} from './organizer-resolution.js';
 
-export type TaxonomyMode = 'merge' | 'replace';
+// The organizer helpers now live in organizer-resolution.ts; these aliases keep this module's
+// existing exports (and category/tag behavior) unchanged.
+export { computeFinal, toApiPayloadItem, type ResolveResult };
+export const resolveTaxonomyValues = resolveOrganizerValues;
+export const toTaxonomyItem = toOrganizerItem;
+export const toTaxonomyItems = toOrganizerItems;
+export type TaxonomyMode = OrganizerMode;
+export type TaxonomyItem = OrganizerItem;
+export type TaxonomyCollectionResult = OrganizerCollectionResult;
 export type TaxonomyKind = 'category' | 'tag';
-
-export interface TaxonomyItem {
-  id: string;
-  name: string;
-  slug: string;
-}
-
-export interface TaxonomyCollectionResult {
-  final: TaxonomyItem[];
-  added: TaxonomyItem[];
-  removed: TaxonomyItem[];
-  created: TaxonomyItem[];
-}
 
 export interface TaxonomyUpdateInput {
   categories?: string[];
@@ -55,23 +62,6 @@ export class MissingTaxonomyItemsError extends Error {
   }
 }
 
-function toTaxonomyItem(raw: Record<string, unknown>): TaxonomyItem {
-  return {
-    id: String(raw.id),
-    name: String(raw.name),
-    slug: String(raw.slug),
-  };
-}
-
-function toTaxonomyItems(raw: unknown): TaxonomyItem[] {
-  if (!Array.isArray(raw)) return [];
-  return raw.map((item) => toTaxonomyItem(item as Record<string, unknown>));
-}
-
-function toApiPayloadItem(item: TaxonomyItem): Record<string, unknown> {
-  return { id: item.id, name: item.name, slug: item.slug };
-}
-
 async function getAllCategories(): Promise<TaxonomyItem[]> {
   const result = await categoriesApi.getCategories({ perPage: -1 });
   return result.items.map(toTaxonomyItem);
@@ -80,82 +70,6 @@ async function getAllCategories(): Promise<TaxonomyItem[]> {
 async function getAllTags(): Promise<TaxonomyItem[]> {
   const result = await tagsApi.getTags({ perPage: -1 });
   return result.items.map(toTaxonomyItem);
-}
-
-interface ResolveResult {
-  resolved: TaxonomyItem[];
-  created: TaxonomyItem[];
-  missing: string[];
-}
-
-async function resolveTaxonomyValues(
-  values: string[],
-  existing: TaxonomyItem[],
-  createMissing: boolean,
-  createFn: (name: string) => Promise<Record<string, unknown>>,
-): Promise<ResolveResult> {
-  const byId = new Map<string, TaxonomyItem>();
-  const bySlug = new Map<string, TaxonomyItem>();
-  const byName = new Map<string, TaxonomyItem>();
-  for (const item of existing) {
-    byId.set(item.id.toLowerCase(), item);
-    bySlug.set(item.slug.toLowerCase(), item);
-    byName.set(item.name.toLowerCase(), item);
-  }
-
-  const resolvedMap = new Map<string, TaxonomyItem>();
-  const created: TaxonomyItem[] = [];
-  const missing: string[] = [];
-  const createdThisCall = new Map<string, TaxonomyItem>();
-
-  for (const raw of values) {
-    const value = raw.trim();
-    if (!value) continue;
-    const key = value.toLowerCase();
-    const match = byId.get(key) ?? bySlug.get(key) ?? byName.get(key) ?? createdThisCall.get(key);
-    if (match) {
-      resolvedMap.set(match.id, match);
-      continue;
-    }
-
-    if (!createMissing) {
-      missing.push(raw);
-      continue;
-    }
-
-    const createdRaw = await createFn(value);
-    const item = toTaxonomyItem(createdRaw);
-    createdThisCall.set(key, item);
-    resolvedMap.set(item.id, item);
-    created.push(item);
-  }
-
-  return { resolved: [...resolvedMap.values()], created, missing };
-}
-
-function computeFinal(
-  mode: TaxonomyMode,
-  current: TaxonomyItem[],
-  requested: TaxonomyItem[],
-): { final: TaxonomyItem[]; added: TaxonomyItem[]; removed: TaxonomyItem[] } {
-  if (mode === 'replace') {
-    const finalMap = new Map(requested.map((item) => [item.id, item]));
-    const currentIds = new Set(current.map((item) => item.id));
-    const final = [...finalMap.values()];
-    const added = final.filter((item) => !currentIds.has(item.id));
-    const removed = current.filter((item) => !finalMap.has(item.id));
-    return { final, added, removed };
-  }
-
-  const finalMap = new Map(current.map((item) => [item.id, item]));
-  const added: TaxonomyItem[] = [];
-  for (const item of requested) {
-    if (!finalMap.has(item.id)) {
-      finalMap.set(item.id, item);
-      added.push(item);
-    }
-  }
-  return { final: [...finalMap.values()], added, removed: [] };
 }
 
 export interface TaxonomyPatchOutcome {
@@ -242,27 +156,6 @@ export async function updateRecipeTaxonomy(
 }
 
 const BATCH_CONCURRENCY = 5;
-
-async function mapWithConcurrency<T, R>(
-  items: T[],
-  limit: number,
-  fn: (item: T) => Promise<R>,
-): Promise<R[]> {
-  const results: R[] = new Array(items.length) as R[];
-  let next = 0;
-
-  async function worker(): Promise<void> {
-    for (;;) {
-      const index = next++;
-      if (index >= items.length) return;
-      results[index] = await fn(items[index]);
-    }
-  }
-
-  const workers = Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, () => worker());
-  await Promise.all(workers);
-  return results;
-}
 
 export async function updateRecipeTaxonomyBatch(
   updates: RecipeTaxonomyBatchUpdate[],
