@@ -38,8 +38,8 @@ export class InvalidLimitError extends SharedInvalidLimitError {
 /**
  * Which recipes to return, based purely on the deterministic per-ingredient `parsingState`
  * (see classifyIngredient below) — never on semantic interpretation of ingredient text:
- *  - "unparsed_only": at least one ingredient has no associated food (excluding section
- *    headings) — the strong, low-noise signal that a line still needs a food resolved.
+ *  - "unparsed_only": at least one ingredient has no associated food (excluding pure section
+ *    heading rows; a titled real ingredient still counts) — the strong, low-noise signal that a line still needs a food resolved.
  *  - "partially_parsed": at least one ingredient has a food but no unit (see classifyIngredient
  *    for the documented false-positive tradeoff this carries for legitimately unit-less
  *    countable foods like "4 eggs").

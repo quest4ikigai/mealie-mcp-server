@@ -528,7 +528,7 @@ The intended workflow:
 
 - `limit` — 1-50, default 25.
 - `state` — which recipes to include, default `"unparsed_only"`:
-  - `"unparsed_only"` — at least one ingredient has no associated food.
+  - `"unparsed_only"` — at least one non-section ingredient has no associated food (pure section headings are excluded).
   - `"partially_parsed"` — at least one ingredient has a food but no unit despite a positive quantity (see the false-positive caveat below).
   - `"any"` — no filtering; every scanned recipe is returned, useful for auditing.
 
@@ -536,14 +536,16 @@ The intended workflow:
 
 Mealie's `RecipeIngredient` schema, confirmed against a live instance, exposes no explicit "is this a section heading" or "is this deliberately free-form" flag — only `title`, `quantity`, `unit`, `food`, `note`, `display`, `originalText`, and `referenceId` are actually present on read. So classification here is deliberately narrow and schema-only, never linguistic:
 
-- **`section`** — `title` is non-empty. This is Mealie's own mechanism for ingredient section headers (e.g. "For the sauce"); a heading row is never counted as needing parsing, so a recipe made entirely of structured ingredients plus a section heading still correctly reads as fully parsed.
-- **`unparsed`** — `title` is empty and `food` is `null`. The primary, high-confidence signal this tool is built around.
+- **`section`** — a *pure heading row*: `title` is non-empty and there is no food, no unit, no positive quantity, empty `note` and `display`, and an `originalText` that is empty or identical to `title` (Mealie can store a heading's own text there). A row whose `originalText` differs from its `title` carries ingredient payload and is not a pure heading. This is Mealie's own mechanism for ingredient section headers (e.g. "For the sauce"); a pure heading row is never counted as needing parsing. A non-empty `title` on a row that carries a real ingredient does **not** make it `section` — Mealie starts a section by setting `title` on that section's first ingredient, so `title` is ignored when classifying such rows.
+- **`unparsed`** — not a pure heading row and `food` is `null`. The primary, high-confidence signal this tool is built around.
 - **`partial`** — `food` is present but `unit` is `null` while `quantity` is a positive number. **Known limitation**: this is indistinguishable, without linguistic parsing, from a legitimately unit-less countable ingredient — real-world data shows things like `"4 eggs"`, `"2 lemons"`, or `"1 pie crust"` are commonly and *correctly* structured with no unit at all. Treat `partially_parsed` results as a coarse audit signal to sanity-check, not a confirmed defect.
 - **`structured`** — a food is present and either a unit is present, or quantity isn't a positive number (e.g. a to-taste garnish with no meaningful quantity).
 
+**Section titles are counted independently of parsing state.** `sectionCount` counts every row with a non-empty `title` (pure headings and titled real ingredients alike), so a titled ingredient contributes to both one parsing count and `sectionCount`. The counts therefore do not sum to `totalCount`, which is the number of stored ingredient rows.
+
 **"Free-form" entries** (deliberately non-food lines, e.g. "extra napkins") were investigated but are **not** exposed as a distinct state: nothing in Mealie's schema distinguishes them from a genuinely unparsed food ingredient — both are `food: null`, `title` empty, with text in `note`/`display`. Rather than fabricate a distinction the data can't support, such rows are classified as `unparsed` like any other food-less ingredient.
 
-**`originalText` is not a reliable signal.** It was investigated as a possible "this came from unparsed source text" marker but discarded — on a live Mealie instance it was observed `null` on every ingredient, fully structured and completely unparsed alike. Imported/scraped recipes put the raw ingredient line straight into `note`/`display` instead. This tool still returns `originalText` when Mealie does populate it, but does not rely on it for classification.
+**`originalText` is not a reliable signal.** It was investigated as a possible "this came from unparsed source text" marker but discarded — on a live Mealie instance it was observed `null` on the real ingredients checked, fully structured and completely unparsed alike (pure heading rows may carry their own title there). Imported/scraped recipes put the raw ingredient line straight into `note`/`display` instead. This tool still returns `originalText` when Mealie does populate it, but does not rely on it for classification.
 
 ### Returned ingredient fields
 
@@ -582,11 +584,11 @@ The server never broadens a specific request into comprehensive cleanup, and the
 
 | Filter | Values | Matches when |
 | --- | --- | --- |
-| `ingredientParsing` | `unparsed` | some ingredient has no Food |
+| `ingredientParsing` | `unparsed` | some ingredient has no Food, excluding pure section-heading rows |
 | | `partial` | some ingredient has a Food and positive quantity but no Unit (coarse signal) |
 | | `unparsed_or_partial` | either |
-| `ingredientSections` | `true` | ingredient section headings exist |
-| | `false` | ingredients exist but no section headings (zero ingredients never match) |
+| `ingredientSections` | `true` | at least one ingredient row has a section title |
+| | `false` | ingredients exist but no row has a section title (zero ingredients never match) |
 | `instructionIngredientLinks` | `missing` | instructions exist but none reference an ingredient (zero instructions never match) |
 | | `dangling` | an instruction reference matches no current ingredient `referenceId` |
 | | `missing_or_dangling` | either |

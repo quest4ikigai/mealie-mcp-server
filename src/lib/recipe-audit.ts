@@ -54,16 +54,32 @@ function hasObject(value: unknown): boolean {
 }
 
 /**
+ * A pure section heading row: a non-empty `title` with no meaningful ingredient payload (no food,
+ * unit, positive quantity, note, or display, and an `originalText` that is empty or identical to the
+ * title). Schema-only; never reads text meaning.
+ */
+export function isPureIngredientSectionRow(raw: Record<string, unknown>): boolean {
+  if (!str(raw.title)) return false;
+  if (hasObject(raw.food) || hasObject(raw.unit)) return false;
+  if (typeof raw.quantity === 'number' && raw.quantity > 0) return false;
+  const originalText = str(raw.originalText);
+  const originalTextIsHeadingOnly = !originalText || originalText === str(raw.title);
+  return !str(raw.note) && !str(raw.display) && originalTextIsHeadingOnly;
+}
+
+/**
  * Deterministic, schema-only classification of a single ingredient row. Mealie's RecipeIngredient
  * schema (confirmed against a live instance) exposes no explicit "isFood"/"disableAmount"/
  * "freeform" flag — only `title`, `quantity`, `unit`, `food`, `note`, `display`, `originalText`,
  * and `referenceId` are actually present on read. So the only reliable, non-linguistic signals
  * available are field *presence*, not text content:
- *  - "section": `title` is non-empty. This is Mealie's own documented mechanism for ingredient
- *    section headers (e.g. "For the sauce") — a heading row normally carries no food/unit/note of
- *    its own. Section rows are never counted as needing parsing.
- *  - "unparsed": `title` is empty and `food` is null. This is the primary, high-confidence signal
- *    the tool is built around — Mealie itself has not linked this line to any food.
+ *  - "section": a pure heading row (see isPureIngredientSectionRow) — a non-empty `title` and no
+ *    other meaningful ingredient payload. Pure heading rows are never counted as needing parsing.
+ *    A non-empty `title` on a row that carries a real ingredient does NOT make it a "section":
+ *    Mealie uses `title` to start a section on the first ingredient of that section, so `title` is
+ *    ignored for every row below.
+ *  - "unparsed": not a pure heading and `food` is null. This is the primary, high-confidence
+ *    signal the tool is built around — Mealie itself has not linked this line to any food.
  *  - "partial": `food` is present but `unit` is null and `quantity` is a positive number. KNOWN,
  *    DOCUMENTED LIMITATION: this cannot be distinguished, without linguistic parsing of the
  *    ingredient text, from a fully-and-correctly-structured count-based ingredient that simply
@@ -74,9 +90,11 @@ function hasObject(value: unknown): boolean {
  *    number (e.g. a garnish like "avocado, diced, for serving" with no meaningful quantity).
  *
  * `originalText` was investigated as a potential "this came from unparsed source text" signal but
- * discarded: on a live instance it was null on every observed ingredient, both fully structured
+ * discarded: on a live instance it was null on the observed real ingredients, both fully structured
  * and completely unparsed alike — imported/scraped recipes put the raw line straight into `note`/
- * `display` instead. It is not a reliable signal and is not used for classification.
+ * `display` instead. (Mealie can also store a heading's own title there, which is why a pure
+ * heading may carry `originalText` equal to its `title`.) It is not used to detect unparsed
+ * ingredients; it only matters for the pure-heading check above.
  *
  * "free_form" (a deliberately non-food entry, e.g. "extra napkins") is NOT a distinct state:
  * nothing in the schema distinguishes it from a genuinely unparsed food ingredient (both are
@@ -84,7 +102,7 @@ function hasObject(value: unknown): boolean {
  * rather than fabricating a distinction the data doesn't support.
  */
 export function classifyIngredient(raw: Record<string, unknown>): IngredientState {
-  if (str(raw.title)) return 'section';
+  if (isPureIngredientSectionRow(raw)) return 'section';
   if (!hasObject(raw.food)) return 'unparsed';
 
   const quantity = typeof raw.quantity === 'number' ? raw.quantity : null;
@@ -93,16 +111,23 @@ export function classifyIngredient(raw: Record<string, unknown>): IngredientStat
   return 'structured';
 }
 
-export function countIngredientStates(states: IngredientState[]): IngredientParsingCounts {
+/**
+ * Counts parsing states and section titles. Section title presence is orthogonal to parsing
+ * state: `sectionCount` counts every row with a non-empty `title` (pure headings and titled real
+ * ingredients alike), so a titled real ingredient contributes to both one parsing count and
+ * `sectionCount`. The counts therefore do NOT sum to `totalCount` (stored ingredient rows).
+ */
+export function countIngredientStates(rows: Record<string, unknown>[]): IngredientParsingCounts {
   const counts: IngredientParsingCounts = {
-    totalCount: states.length,
+    totalCount: rows.length,
     structuredCount: 0,
     partialCount: 0,
     unparsedCount: 0,
     sectionCount: 0,
   };
-  for (const state of states) {
-    switch (state) {
+  for (const row of rows) {
+    if (str(row.title)) counts.sectionCount++;
+    switch (classifyIngredient(row)) {
       case 'structured':
         counts.structuredCount++;
         break;
@@ -113,7 +138,6 @@ export function countIngredientStates(states: IngredientState[]): IngredientPars
         counts.unparsedCount++;
         break;
       case 'section':
-        counts.sectionCount++;
         break;
     }
   }
@@ -154,7 +178,7 @@ export function auditRecipe(detail: Record<string, unknown>): RecipeEnrichmentAu
   const ingredients = toArray(detail.recipeIngredient);
   const taxonomy = auditTaxonomy(detail);
   return {
-    ingredients: countIngredientStates(ingredients.map(classifyIngredient)),
+    ingredients: countIngredientStates(ingredients),
     instructions: auditInstructions(toArray(detail.recipeInstructions), ingredients),
     toolCount: toArray(detail.tools).length,
     categoryCount: taxonomy.categoryCount,
