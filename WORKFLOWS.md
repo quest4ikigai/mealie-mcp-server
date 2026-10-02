@@ -584,7 +584,7 @@ The server never broadens a specific request into comprehensive cleanup, and the
 
 | Filter | Values | Matches when |
 | --- | --- | --- |
-| `ingredientParsing` | `unparsed` | some ingredient has no Food |
+| `ingredientParsing` | `unparsed` | some ingredient has no Food, excluding pure section-heading rows |
 | | `partial` | some ingredient has a Food and positive quantity but no Unit (coarse signal) |
 | | `unparsed_or_partial` | either |
 | `ingredientSections` | `true` | at least one ingredient row has a section title |
