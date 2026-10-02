@@ -4,7 +4,7 @@ import * as recipesApi from '../api/recipes.js';
 import { buildTaxonomyPatch, updateRecipeTaxonomy, updateRecipeTaxonomyBatch } from '../lib/recipe-taxonomy.js';
 import { updateRecipeTools, updateRecipeToolsBatch, RECIPE_TOOLS_BATCH_MAX_SIZE } from '../lib/recipe-tools.js';
 import { resolveTaxonomyFilter } from '../lib/taxonomy-resolution.js';
-import { setRecipeImage } from '../lib/recipe-image.js';
+import { setRecipeImage, setRecipeImageFromFile } from '../lib/recipe-image.js';
 import { findRecipesForIngredients } from '../lib/find-recipes-for-ingredients.js';
 import {
   getRecipesForClassification,
@@ -1156,6 +1156,34 @@ export function registerRecipeTools(server: McpServer) {
       }
     },
   );
+
+  const setRecipeImageFromFileTool =
+  // @endpoints PUT /api/recipes/{slug}/image
+  server.tool(
+    'set_recipe_image_from_file',
+    'Sets or replaces a recipe\'s image from a host-provided file reference (host-dependent: only hosts that can pass file parameters, such as ChatGPT via `openai/fileParams`, supply `file`). The server downloads `file.download_url` directly, so no base64 passes through the model. Preferred order: this tool when the host provides a file reference; `set_recipe_image_from_url` when the image is at a fetchable URL; `set_recipe_image` with base64 as the portable fallback (and with `null` to delete an image). The download is limited to public http(s) hosts, a timeout, and 10 MB; PNG, JPEG, WebP, and GIF are accepted and the format is detected from the bytes (`mime_type`/`file_name` are only hints). Validation happens before anything is sent to Mealie, and no other recipe fields are touched.',
+    {
+      slug: z.string(),
+      file: z.object({
+        download_url: z.string().describe('Temporary URL the server downloads the file from.'),
+        file_id: z.string().describe('Host file identifier.'),
+        mime_type: z.string().optional().describe('Optional MIME type hint; not trusted.'),
+        file_name: z.string().optional().describe('Optional file name hint; not trusted.'),
+      }),
+    },
+    async ({ slug, file }) => {
+      try {
+        const result = await setRecipeImageFromFile(slug, file);
+        return successResponse(result);
+      } catch (error) {
+        return errorResponse(error);
+      }
+    },
+  );
+  // Optional OpenAI host extension; generic MCP clients ignore it.
+  if (setRecipeImageFromFileTool) {
+    setRecipeImageFromFileTool._meta = { 'openai/fileParams': ['file'] };
+  }
 
   // @endpoints POST /api/recipes/{slug}/image
   server.tool(

@@ -2,7 +2,7 @@
 
 | Category | Tools |
 |---|---|
-| Recipes | 24 |
+| Recipes | 25 |
 | Meal Plans | 6 |
 | Categories | 7 |
 | Tags | 7 |
@@ -10,9 +10,9 @@
 | Foods | 6 |
 | Units | 6 |
 | Tools | 6 |
-| **Total** | **75** |
+| **Total** | **76** |
 
-## Recipes Operations (24)
+## Recipes Operations (25)
 
 - `create_recipe` — POST /api/recipes, PUT /api/recipes/{slug}
   Creates a new recipe. Optionally sets ingredients and instructions on creation.
@@ -73,6 +73,10 @@
 - `set_recipe_image` — PUT /api/recipes/{slug}/image, DELETE /api/recipes/{slug}/image
   Sets, replaces, or deletes a recipe's image. Pass `imageBase64` as base64-encoded PNG, JPEG, WebP, or GIF data (max 10 MB; a data: URI prefix is accepted) to upload or replace the image, or pass `null` to delete the existing image. Input is validated before anything is sent to Mealie, and no other recipe fields are touched. `extension` is optional; the format is detected from the data, and a mismatching extension is rejected. To set an image from a URL instead, use `set_recipe_image_from_url`.
   Params: `slug`, `imageBase64`, `extension`
+
+- `set_recipe_image_from_file` — PUT /api/recipes/{slug}/image
+  Sets or replaces a recipe's image from a host-provided file reference (host-dependent: only hosts that can pass file parameters, such as ChatGPT via `openai/fileParams`, supply `file`). The server downloads `file.download_url` directly, so no base64 passes through the model. Preferred order: this tool when the host provides a file reference; `set_recipe_image_from_url` when the image is at a fetchable URL; `set_recipe_image` with base64 as the portable fallback (and with `null` to delete an image). The download is limited to public http(s) hosts, a timeout, and 10 MB; PNG, JPEG, WebP, and GIF are accepted and the format is detected from the bytes (`mime_type`/`file_name` are only hints). Validation happens before anything is sent to Mealie, and no other recipe fields are touched.
+  Params: `slug`, `file`
 
 - `set_recipe_image_from_url` — POST /api/recipes/{slug}/image
   Sets a recipe's image from a URL.
