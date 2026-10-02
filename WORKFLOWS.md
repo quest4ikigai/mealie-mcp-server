@@ -536,10 +536,12 @@ The intended workflow:
 
 Mealie's `RecipeIngredient` schema, confirmed against a live instance, exposes no explicit "is this a section heading" or "is this deliberately free-form" flag — only `title`, `quantity`, `unit`, `food`, `note`, `display`, `originalText`, and `referenceId` are actually present on read. So classification here is deliberately narrow and schema-only, never linguistic:
 
-- **`section`** — `title` is non-empty. This is Mealie's own mechanism for ingredient section headers (e.g. "For the sauce"); a heading row is never counted as needing parsing, so a recipe made entirely of structured ingredients plus a section heading still correctly reads as fully parsed.
-- **`unparsed`** — `title` is empty and `food` is `null`. The primary, high-confidence signal this tool is built around.
+- **`section`** — a *pure heading row*: `title` is non-empty and there is no food, no unit, no positive quantity, and empty `note`, `display`, and `originalText`. This is Mealie's own mechanism for ingredient section headers (e.g. "For the sauce"); a pure heading row is never counted as needing parsing. A non-empty `title` on a row that carries a real ingredient does **not** make it `section` — Mealie starts a section by setting `title` on that section's first ingredient, so `title` is ignored when classifying such rows.
+- **`unparsed`** — not a pure heading row and `food` is `null`. The primary, high-confidence signal this tool is built around.
 - **`partial`** — `food` is present but `unit` is `null` while `quantity` is a positive number. **Known limitation**: this is indistinguishable, without linguistic parsing, from a legitimately unit-less countable ingredient — real-world data shows things like `"4 eggs"`, `"2 lemons"`, or `"1 pie crust"` are commonly and *correctly* structured with no unit at all. Treat `partially_parsed` results as a coarse audit signal to sanity-check, not a confirmed defect.
 - **`structured`** — a food is present and either a unit is present, or quantity isn't a positive number (e.g. a to-taste garnish with no meaningful quantity).
+
+**Section titles are counted independently of parsing state.** `sectionCount` counts every row with a non-empty `title` (pure headings and titled real ingredients alike), so a titled ingredient contributes to both one parsing count and `sectionCount`. The counts therefore do not sum to `totalCount`, which is the number of stored ingredient rows.
 
 **"Free-form" entries** (deliberately non-food lines, e.g. "extra napkins") were investigated but are **not** exposed as a distinct state: nothing in Mealie's schema distinguishes them from a genuinely unparsed food ingredient — both are `food: null`, `title` empty, with text in `note`/`display`. Rather than fabricate a distinction the data can't support, such rows are classified as `unparsed` like any other food-less ingredient.
 
@@ -585,8 +587,8 @@ The server never broadens a specific request into comprehensive cleanup, and the
 | `ingredientParsing` | `unparsed` | some ingredient has no Food |
 | | `partial` | some ingredient has a Food and positive quantity but no Unit (coarse signal) |
 | | `unparsed_or_partial` | either |
-| `ingredientSections` | `true` | ingredient section headings exist |
-| | `false` | ingredients exist but no section headings (zero ingredients never match) |
+| `ingredientSections` | `true` | at least one ingredient row has a section title |
+| | `false` | ingredients exist but no row has a section title (zero ingredients never match) |
 | `instructionIngredientLinks` | `missing` | instructions exist but none reference an ingredient (zero instructions never match) |
 | | `dangling` | an instruction reference matches no current ingredient `referenceId` |
 | | `missing_or_dangling` | either |

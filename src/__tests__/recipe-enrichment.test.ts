@@ -184,6 +184,19 @@ describe('individual filter predicates', () => {
     expect(await slugs({ ingredientSections: false })).toEqual(['recipe-2']);
   });
 
+  it('titled real ingredients keep their parsing state and count as sections; pure headings match no parsing filter', async () => {
+    setup([
+      makeRecipe(1, { recipeIngredient: [{ ...unparsed(), title: 'Extra' }] }),
+      makeRecipe(2, { recipeIngredient: [{ ...partial(), title: 'Crust' }] }),
+      makeRecipe(3, { recipeIngredient: [section(), structured()] }),
+      makeRecipe(4, { recipeIngredient: [section(), { ...partial(), title: 'Crust' }, structured()] }),
+    ]);
+    expect(await slugs({ ingredientParsing: 'unparsed' })).toEqual(['recipe-1']);
+    expect(await slugs({ ingredientParsing: 'partial' })).toEqual(['recipe-2', 'recipe-4']);
+    expect(await slugs({ ingredientSections: true })).toEqual(['recipe-1', 'recipe-2', 'recipe-3', 'recipe-4']);
+    expect(await slugs({ ingredientSections: false })).toEqual([]);
+  });
+
   it('instructionIngredientLinks missing / dangling / missing_or_dangling', async () => {
     const step = (refs: unknown[]) => [{ id: 'i', title: '', text: 'x', ingredientReferences: refs }];
     setup([
