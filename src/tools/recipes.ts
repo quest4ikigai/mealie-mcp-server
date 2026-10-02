@@ -28,6 +28,11 @@ import {
   INGREDIENT_PARSING_MAX_LIMIT,
   INGREDIENT_PARSING_DEFAULT_STATE,
 } from '../lib/recipe-ingredient-parsing.js';
+import {
+  getRecipesForDataEnrichment,
+  ENRICHMENT_DEFAULT_LIMIT,
+  ENRICHMENT_MAX_LIMIT,
+} from '../lib/recipe-enrichment.js';
 
 const taxonomyModeSchema = z
   .enum(['merge', 'replace'])
@@ -598,6 +603,92 @@ export function registerRecipeTools(server: McpServer) {
     async ({ cursor, limit, state }) => {
       try {
         const result = await getRecipesForIngredientParsing({ cursor, limit, state });
+        return successResponse(result);
+      } catch (error) {
+        return errorResponse(error);
+      }
+    },
+  );
+
+  // @endpoints GET /api/recipes, GET /api/recipes/{slug}
+  server.tool(
+    'get_recipes_for_data_enrichment',
+    'Compact, paginated, READ-ONLY holistic work queue of recipes that match deterministic enrichment-review ' +
+      'conditions across several dimensions at once: ingredient parsing, ingredient section headings, ' +
+      'instruction-to-ingredient links, Tools, Categories, Tags, and image. It reports stored-schema facts and ' +
+      'filters on them; it never decides what should change. A match is a review signal, NOT a verdict — e.g. ' +
+      '"4 eggs" legitimately has no unit, a recipe may not need sections or equipment, and existing Categories/' +
+      'Tags may already be correct. Use matchedDimensions, the recipe context, and the audit counts to decide ' +
+      'what actually warrants a change, preserve correct existing data, and apply changes with the focused ' +
+      'write tools (update_recipe_ingredients, update_recipe_instructions, update_recipe_tools, ' +
+      'update_recipe_taxonomy and their batch forms, and the recipe image tools). When to use it: for a clearly ' +
+      'scoped single task prefer the focused queue (get_recipes_for_ingredient_parsing, ' +
+      'get_recipes_for_classification); use this queue for several enrichment dimensions in one pass or for ' +
+      'broad "clean up / enrich my recipes" requests with its default filters, paging until hasMore is false ' +
+      'unless the user narrows scope. Never broaden a specific request into comprehensive cleanup. Filters: ' +
+      'ingredientParsing ("unparsed" = some ingredient has no food; "partial" = some ingredient has a food and ' +
+      'positive quantity but no unit — coarse signal; "unparsed_or_partial"), ingredientSections (true = has ' +
+      'section headings; false = has ingredients but no section headings — recipes with zero ingredients never ' +
+      'match false), instructionIngredientLinks ("missing" = has instructions but none reference an ingredient; ' +
+      '"dangling" = an instruction reference matches no current ingredient referenceId; "missing_or_dangling"), ' +
+      'tools / categories / tags / image (true = present, false = absent). If filters is omitted, the defaults are ' +
+      'ingredientParsing "unparsed_or_partial", ingredientSections false, instructionIngredientLinks ' +
+      '"missing_or_dangling", tools false, categories false, tags false, image false. If filters is provided it ' +
+      'is the COMPLETE active set — it is not merged with the defaults — and an empty filters object is rejected. match "any" (default) returns ' +
+      'recipes matching at least one active filter; "all" requires every active filter. Recipes are scanned ' +
+      'oldest-created first (createdAt, then id). Each item includes createdAt and updatedAt (use updatedAt as ' +
+      'expectedUpdatedAt for guarded writers), ingredients with parsingState, instructions with ' +
+      'ingredientReferenceIds, tools, categories, tags, the audit facts, and matchedDimensions (the active ' +
+      'dimensions this recipe matched). Instruction ids are not exposed and are not stable identity — Mealie ' +
+      'regenerates them on every recipe update. Every scanned recipe needs a full detail fetch (bounded ' +
+      'concurrency); a failure reading one recipe is reported in failures without failing the page. A sparse ' +
+      'queue may return fewer than limit items while hasMore is true if the internal time budget is reached — ' +
+      'this is expected. Pass nextCursor back unchanged to continue; stop once hasMore is false.',
+    {
+      cursor: z
+        .string()
+        .optional()
+        .describe(
+          'Opaque continuation token from a previous call\'s nextCursor. Pass it back unchanged; omit it to ' +
+            'start from the oldest recipe. Malformed or foreign cursors are rejected with a clear error.',
+        ),
+      limit: z
+        .number()
+        .int(`limit must be between 1 and ${ENRICHMENT_MAX_LIMIT}.`)
+        .min(1, `limit must be between 1 and ${ENRICHMENT_MAX_LIMIT}.`)
+        .max(ENRICHMENT_MAX_LIMIT, `limit must be between 1 and ${ENRICHMENT_MAX_LIMIT}.`)
+        .optional()
+        .describe(`Maximum recipes to return (1-${ENRICHMENT_MAX_LIMIT}, default ${ENRICHMENT_DEFAULT_LIMIT}).`),
+      match: z
+        .enum(['any', 'all'])
+        .optional()
+        .describe('How active filters combine: "any" (default) = at least one matches; "all" = every active filter matches.'),
+      filters: z
+        .object({
+          ingredientParsing: z.enum(['unparsed', 'partial', 'unparsed_or_partial']).optional(),
+          ingredientSections: z.boolean().optional(),
+          instructionIngredientLinks: z.enum(['missing', 'dangling', 'missing_or_dangling']).optional(),
+          tools: z.boolean().optional(),
+          categories: z.boolean().optional(),
+          tags: z.boolean().optional(),
+          image: z.boolean().optional(),
+        })
+        .strict()
+        .optional()
+        .describe(
+          'Complete active filter set (replaces the defaults; must contain at least one key). Booleans: true = ' +
+            'present, false = absent. Omit to use the default enrichment filters.',
+        ),
+    },
+    {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+    async ({ cursor, limit, match, filters }) => {
+      try {
+        const result = await getRecipesForDataEnrichment({ cursor, limit, match, filters });
         return successResponse(result);
       } catch (error) {
         return errorResponse(error);
