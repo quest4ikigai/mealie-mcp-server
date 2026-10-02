@@ -141,7 +141,7 @@ export const MEALIE_SERVER_INSTRUCTIONS = [
   '',
   '### Leave already-correct rows alone',
   '',
-  'When a recipe mixes structured and unparsed ingredients, preserve the already-correct rows — quantity, unit, food, note, referenceId — unchanged, and only touch them when context reveals an actual error or the user\'s request requires it. `update_recipe_ingredients` still needs them included in the write payload even though they didn\'t change.',
+  'When a recipe mixes structured and unparsed ingredients, preserve the already-correct rows — quantity, unit, food, note, referenceId — unchanged, and only touch them when context reveals an actual error or the user\'s request requires it. With a full-replacement `ingredients` write, unchanged rows must still be included in the payload; with the referenceId-based delta fields (do not combine them with `ingredients`), leave unchanged rows out entirely.',
   '',
   '### Candidate selection and missing vocabulary',
   '',
