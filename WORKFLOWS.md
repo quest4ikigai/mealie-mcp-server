@@ -67,6 +67,8 @@ Every value in `categories`/`tags` may be a name, a slug, or an ID — matching 
 
 `createMissing: true` above means `Weeknight` and `Middle Eastern` are created automatically if they don't already exist.
 
+Unchanged Category/Tag collections are never written, whether the legacy merge/replace form or the explicit delta form is used. A `replace` with the same set in a different order, or a `merge` of already-assigned values, is a no-op. If nothing changes, no recipe PATCH is issued (Mealie regenerates instruction IDs on every recipe write); mixed requests write only the collections that change. `patch_recipe` follows the same rule: no-op taxonomy is omitted from the payload, and a taxonomy-only no-op returns the current recipe with `taxonomyChanges` without any PATCH.
+
 **Clear all categories from a recipe** by passing an explicit empty array with `mode: "replace"` — omitting `categories` instead would leave it untouched:
 
 ```json
@@ -77,17 +79,42 @@ Every value in `categories`/`tags` may be a name, a slug, or an ID — matching 
 }
 ```
 
-**Update many recipes at once** with `update_recipe_taxonomy_batch`. Each entry is processed independently (bounded concurrency) and the response includes a per-recipe success or error result, so one bad slug doesn't fail the whole batch:
+### Delta form: add / remove
+
+Instead of `categories`/`tags` + `mode`, pass `addCategories`/`removeCategories` and/or `addTags`/`removeTags` to change only specific assignments (`current - remove + add`), leaving every other assigned category/tag untouched:
+
+```json
+{
+  "slug": "chicken-shawarma",
+  "addCategories": ["Dinner"],
+  "removeCategories": ["Lunch"],
+  "addTags": ["Weeknight"],
+  "createMissing": true
+}
+```
+
+- Per collection, use one form or the other: `categories` cannot be combined with `addCategories`/`removeCategories`, and `tags` cannot be combined with `addTags`/`removeTags`. Mixing forms *across* collections is fine (e.g. `categories` + `mode: "replace"` alongside `addTags`).
+- `mode` applies only to `categories`/`tags`; passing it with only delta fields is rejected.
+- Values use the same name/slug/ID resolution. `createMissing` only creates values from `categories`/`tags` or the `add*` fields; `remove*` values are never created, and an unknown removal fails the call before any write.
+- The same resolved category (or tag) in both its add and remove list is rejected.
+- Every requested collection is validated before anything is created, so a bad tag never leaves a newly created category behind.
+- A delta collection that changes nothing is left out of the PATCH; if nothing changes at all, the recipe isn't written.
+
+### Batch: update_recipe_taxonomy_batch
+
+**Update many recipes at once** with `update_recipe_taxonomy_batch`. Each entry accepts either form and is processed independently (bounded concurrency), and the response includes a per-recipe success or error result, so one bad slug doesn't fail the whole batch:
 
 ```json
 {
   "updates": [
     { "slug": "chicken-shawarma", "categories": ["Dinner"], "mode": "merge" },
     { "slug": "banana-bread", "tags": ["Dessert", "Baking"], "mode": "merge" },
-    { "slug": "does-not-exist", "categories": ["Dinner"], "mode": "merge" }
+    { "slug": "does-not-exist", "addCategories": ["Dinner"], "removeTags": ["Lunch"] }
   ]
 }
 ```
+
+Each recipe slug may appear only once per call; a repeated slug rejects the whole request before any recipe is processed. Category/tag creation via `createMissing` is serialized across the batch (with the organizer list re-read each time), so a value requested by several recipes is created once rather than duplicated. `createMissing` still applies per entry: an entry without it may fail as missing even if another entry in the same call creates that value, so set `createMissing` on every entry that names a new category or tag.
 
 Both tools return the recipe's `id`/`slug` plus, per collection, the `final` list after the update and which items were `added`, `removed`, or `created` — useful for confirming exactly what changed.
 

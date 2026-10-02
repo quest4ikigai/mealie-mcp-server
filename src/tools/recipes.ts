@@ -56,6 +56,34 @@ const tagsParamSchema = z
       'Passing an empty array with mode "replace" clears all tags from the recipe — use with care.',
   );
 
+const taxonomyDeltaValueSchema = z.array(z.string().trim().min(1, 'Values must not be blank.'));
+
+function taxonomyDeltaFields() {
+  return {
+    addCategories: taxonomyDeltaValueSchema
+      .optional()
+      .describe(
+        'Delta form: categories to add (name, slug, or ID). Cannot be combined with categories. Unchanged ' +
+          'categories are preserved.',
+      ),
+    removeCategories: taxonomyDeltaValueSchema
+      .optional()
+      .describe(
+        'Delta form: categories to remove (name, slug, or ID). Must already exist — never created. Cannot be ' +
+          'combined with categories, and cannot overlap addCategories.',
+      ),
+    addTags: taxonomyDeltaValueSchema
+      .optional()
+      .describe('Delta form: tags to add (name, slug, or ID). Cannot be combined with tags.'),
+    removeTags: taxonomyDeltaValueSchema
+      .optional()
+      .describe(
+        'Delta form: tags to remove (name, slug, or ID). Must already exist — never created. Cannot be combined ' +
+          'with tags, and cannot overlap addTags.',
+      ),
+  };
+}
+
 const recipeIngredientInputSchema = z.object({
   quantity: z
     .number()
@@ -492,7 +520,7 @@ export function registerRecipeTools(server: McpServer) {
   // @endpoints GET /api/recipes/{slug}, PATCH /api/recipes/{slug}
   server.tool(
     'patch_recipe',
-    'Partially updates a recipe. Also accepts optional categories/tags/taxonomyMode/createMissing for taxonomy assignment.',
+    'Partially updates a recipe. Also accepts optional categories/tags/taxonomyMode/createMissing for taxonomy assignment. Unchanged Category/Tag collections are never written; if taxonomy is the only thing requested and nothing changes, no PATCH is issued and the current recipe is returned with taxonomyChanges.',
     {
       slug: z.string(),
       name: z.string().optional(),
@@ -524,6 +552,10 @@ export function registerRecipeTools(server: McpServer) {
           });
           Object.assign(data, outcome.patchFields);
           taxonomyChanges = { categories: outcome.categories, tags: outcome.tags };
+          // Taxonomy-only no-op: skip the write (Mealie regenerates instruction ids on every PATCH).
+          if (Object.keys(data).length === 0) {
+            return successResponse({ ...recipe, taxonomyChanges });
+          }
         }
 
         const result = await recipesApi.patchRecipe(slug, data);
@@ -638,17 +670,24 @@ export function registerRecipeTools(server: McpServer) {
   server.tool(
     'update_recipe_taxonomy',
     'Updates a recipe\'s categories and/or tags. Resolves requested names/slugs/IDs against existing taxonomy, ' +
-      'optionally auto-creating missing values. Reads the recipe first to merge with existing taxonomy.',
+      'optionally auto-creating missing values. Reads the recipe first to merge with existing taxonomy. Per ' +
+      'collection, use either categories/tags (+ mode merge/replace) or the delta fields ' +
+      'addCategories/removeCategories/addTags/removeTags (current - remove + add, other assignments untouched); ' +
+      'additions and removals can be combined in one call. Removals must exist and are never created; ' +
+      'createMissing only applies to additions. Unchanged Category/Tag collections are never written, whether the ' +
+      'legacy merge/replace form or explicit delta form is used; if nothing changes, no recipe PATCH is issued. ' +
+      'Returns final/added/removed/created per collection.',
     {
       slug: z.string().describe('Slug of the recipe to update.'),
       categories: categoriesParamSchema.optional(),
       tags: tagsParamSchema.optional(),
+      ...taxonomyDeltaFields(),
       mode: taxonomyModeSchema.optional(),
       createMissing: createMissingSchema.optional(),
     },
-    async ({ slug, categories, tags, mode, createMissing }) => {
+    async ({ slug, ...input }) => {
       try {
-        const result = await updateRecipeTaxonomy(slug, { categories, tags, mode, createMissing });
+        const result = await updateRecipeTaxonomy(slug, input);
         return successResponse(result);
       } catch (error) {
         return errorResponse(error);
@@ -660,7 +699,12 @@ export function registerRecipeTools(server: McpServer) {
   server.tool(
     'update_recipe_taxonomy_batch',
     'Runs update_recipe_taxonomy for multiple recipes with bounded concurrency (5 at a time), returning a ' +
-      'success/error result per recipe.',
+      'success/error result per recipe. Each entry accepts the same legacy (categories/tags + mode) or delta ' +
+      '(addCategories/removeCategories/addTags/removeTags) fields. Each slug may appear only once; a request ' +
+      'that repeats a slug is rejected as a whole before any recipe is processed. Category/tag creation via ' +
+      'createMissing is serialized across the batch so a value requested by several recipes is created once, ' +
+      'but createMissing applies per entry: an entry without it may fail as missing even if another entry ' +
+      'creates that value, so set createMissing on every entry that names a new category or tag.',
     {
       updates: z
         .array(
@@ -668,14 +712,15 @@ export function registerRecipeTools(server: McpServer) {
             slug: z.string().describe('Slug of the recipe to update.'),
             categories: categoriesParamSchema.optional(),
             tags: tagsParamSchema.optional(),
+            ...taxonomyDeltaFields(),
             mode: taxonomyModeSchema.optional(),
             createMissing: createMissingSchema.optional(),
           }),
         )
         .describe(
-          'One entry per recipe to update. Each recipe is processed independently with bounded concurrency — ' +
-            'a failure on one recipe does not abort the others, and the response includes a success/error result ' +
-            'for every entry.',
+          'One entry per recipe to update; slugs must be unique (duplicates reject the whole request with no ' +
+            'changes). Each recipe is processed independently with bounded concurrency — a failure on one recipe ' +
+            'does not abort the others, and the response includes a success/error result for every entry.',
         ),
     },
     async ({ updates }) => {
