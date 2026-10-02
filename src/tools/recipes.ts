@@ -593,7 +593,7 @@ export function registerRecipeTools(server: McpServer) {
         .optional()
         .describe(
           `Which recipes to include (default "${INGREDIENT_PARSING_DEFAULT_STATE}"): "unparsed_only" — at least ` +
-            'one ingredient has no associated food; "partially_parsed" — at least one ingredient has a food but ' +
+            'one non-section ingredient has no associated food (pure section headings are excluded); "partially_parsed" — at least one ingredient has a food but ' +
             'no unit despite a positive quantity (coarse signal, see tool description for its known false-positive ' +
             'tradeoff); "any" — no filtering, every scanned recipe is returned (useful for auditing).',
         ),
