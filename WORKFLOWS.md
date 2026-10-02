@@ -563,6 +563,56 @@ Pagination reuses the same stable, opaque cursor mechanism as `get_recipes_for_c
 
 As with `get_recipes_for_classification`, a failure reading one recipe is reported in `failures` and does not fail the rest of the page.
 
+## Recipe Data Enrichment Workflow
+
+`get_recipes_for_data_enrichment` is a compact, paginated, **READ-ONLY** holistic work queue. It reports deterministic stored-schema facts (from the shared audit model in `src/lib/recipe-audit.ts`) and filters on them; the calling model decides whether a match actually warrants a change. A match is a review signal, not a verdict — `4 eggs` legitimately has no unit, an unsectioned recipe may not need sections, and a recipe with no Tools may not need any.
+
+### Which queue to use
+
+1. **Clearly scoped single task** — use the focused queue: `get_recipes_for_ingredient_parsing` or `get_recipes_for_classification`.
+2. **Several enrichment dimensions in one pass** — use `get_recipes_for_data_enrichment`.
+3. **Broad "clean up / enrich my recipes"** — use `get_recipes_for_data_enrichment` with its default filters, paging until `hasMore` is `false` unless the user narrows scope.
+
+The server never broadens a specific request into comprehensive cleanup, and the model should not either.
+
+### Arguments
+
+- `cursor` — opaque; pass `nextCursor` back unchanged.
+- `limit` — integer 1-50, default 25.
+- `match` — `"any"` (default) or `"all"`; how the active filters combine.
+- `filters` — optional. Omitted: the defaults below apply. Provided: it is the **complete** active set (not merged with defaults) and must not be empty (`{}` is rejected).
+
+| Filter | Values | Matches when |
+| --- | --- | --- |
+| `ingredientParsing` | `unparsed` | some ingredient has no Food, excluding pure section-heading rows |
+| | `partial` | some ingredient has a Food and positive quantity but no Unit (coarse signal) |
+| | `unparsed_or_partial` | either |
+| `ingredientSections` | `true` | at least one ingredient row has a section title |
+| | `false` | ingredients exist but no row has a section title (zero ingredients never match) |
+| `instructionIngredientLinks` | `missing` | instructions exist but none reference an ingredient (zero instructions never match) |
+| | `dangling` | an instruction reference matches no current ingredient `referenceId` |
+| | `missing_or_dangling` | either |
+| `tools` / `categories` / `tags` | `true` / `false` | at least one / none |
+| `image` | `true` / `false` | present / absent |
+
+Defaults when `filters` is omitted: `ingredientParsing: "unparsed_or_partial"`, `ingredientSections: false`, `instructionIngredientLinks: "missing_or_dangling"`, `tools: false`, `categories: false`, `tags: false`, `image: false`, combined with `match: "any"`.
+
+```json
+{ "filters": { "categories": false, "tags": false }, "match": "all" }
+```
+
+returns recipes with neither Categories nor Tags.
+
+### Result items
+
+Each item carries `id`, `slug`, `name`, `createdAt`, `updatedAt` (the concurrency token for guarded writers such as `update_recipe_instructions`' `expectedUpdatedAt`), descriptive fields, `ingredients` (with `parsingState`), `instructions` (`title`, `text`, `ingredientReferenceIds`), `tools`, `categories`, `tags`, the `audit` counts, and `matchedDimensions` — the active filter dimensions this recipe matched. Instruction ids are deliberately not returned: Mealie regenerates them on every recipe update, so they are not stable identity.
+
+The page envelope matches the other queues: `items`, `failures`, `nextCursor`, `scannedCount`, `returnedCount`, `hasMore`. Recipes are scanned oldest-created first (`createdAt`, then `id`) using the shared stable cursor; a sparse queue may return fewer than `limit` items while `hasMore` is `true`. Every scanned recipe needs a detail fetch, so prefer the focused classification queue for taxonomy-only work.
+
+### Applying changes
+
+Use the focused write tools: `update_recipe_ingredients`, `update_recipe_instructions`, `update_recipe_tools`, `update_recipe_taxonomy` (and their batch forms) and the recipe image tools. There is no monolithic cleanup mutation. Image generation/upload is optional and comparatively expensive.
+
 ## Server Instructions
 
 Beyond the per-tool descriptions documented above, this server publishes **server-level MCP instructions** (`src/server-instructions.ts`) — a single string sent to every client during the `initialize` handshake, via `McpServer`'s `instructions` option. Unlike a tool description, which is only visible when that specific tool is being considered, server instructions are always in context for the calling LLM once connected.
