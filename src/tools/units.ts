@@ -78,7 +78,7 @@ export function registerUnitTools(server: McpServer): void {
     'get_unit',
     'Retrieves a single canonical Mealie ingredient unit by ID, including its aliases, abbreviations, and ' +
       'standard-quantity conversion metadata when present.',
-    { unitId: z.string().describe('UUID of the unit to retrieve.') },
+    { unitId: z.string().uuid().describe('UUID of the unit to retrieve.') },
     async ({ unitId }) => {
       try {
         const result = await unitsApi.getUnit(unitId);
@@ -184,7 +184,7 @@ export function registerUnitTools(server: McpServer): void {
       'the complete list back here. Units are shared vocabulary referenced by many recipes\' ingredients — ' +
       'update deliberately, since renaming or repurposing a unit changes how every recipe using it displays.',
     {
-      unitId: z.string().describe('UUID of the unit to update.'),
+      unitId: z.string().uuid().describe('UUID of the unit to update.'),
       name: z.string().optional(),
       pluralName: z.string().optional(),
       description: z.string().optional(),
@@ -224,7 +224,7 @@ export function registerUnitTools(server: McpServer): void {
     'DESTRUCTIVE and irreversible: permanently deletes a canonical Mealie ingredient unit. Use get_unit first ' +
       'to verify this is the exact unit intended. Deleting a unit that is still referenced by existing recipe ' +
       'ingredients will be refused by Mealie rather than cascaded.',
-    { unitId: z.string().describe('UUID of the unit to delete.') },
+    { unitId: z.string().uuid().describe('UUID of the unit to delete.') },
     async ({ unitId }) => {
       try {
         const result = await unitsApi.deleteUnit(unitId);

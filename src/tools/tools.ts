@@ -44,7 +44,7 @@ export function registerToolTools(server: McpServer): void {
   server.tool(
     'get_tool',
     'Retrieves a single Mealie Tool organizer by ID, including metadata such as householdsWithTool when present.',
-    { toolId: z.string().describe('UUID of the tool to retrieve.') },
+    { toolId: z.string().uuid().describe('UUID of the tool to retrieve.') },
     async ({ toolId }) => {
       try {
         return successResponse(await toolsApi.getTool(toolId));
@@ -117,7 +117,7 @@ export function registerToolTools(server: McpServer): void {
       'householdsWithTool ownership metadata, since Mealie\'s PUT is a full replacement; household ownership ' +
       'itself cannot be changed here. Tools are shared by every recipe that uses them, so rename deliberately.',
     {
-      toolId: z.string().describe('UUID of the tool to update.'),
+      toolId: z.string().uuid().describe('UUID of the tool to update.'),
       name: z.string().optional().describe('New name. At least one update field is required.'),
     },
     async ({ toolId, ...rest }) => {
@@ -134,7 +134,7 @@ export function registerToolTools(server: McpServer): void {
     'delete_tool',
     'DESTRUCTIVE and irreversible: permanently deletes a Mealie Tool organizer. Use get_tool first to verify ' +
       'this is the exact Tool intended. If Mealie refuses the deletion, its error is surfaced unchanged.',
-    { toolId: z.string().describe('UUID of the tool to delete.') },
+    { toolId: z.string().uuid().describe('UUID of the tool to delete.') },
     async ({ toolId }) => {
       try {
         return successResponse(await toolsApi.deleteTool(toolId));

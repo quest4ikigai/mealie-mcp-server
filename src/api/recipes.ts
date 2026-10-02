@@ -1,4 +1,4 @@
-import { apiGet, apiPost, apiPatch, apiPut, apiPutForm, apiDelete, buildQueryString, PaginatedResult } from './client.js';
+import { apiGet, apiPost, apiPatch, apiPut, apiPutForm, apiDelete, buildQueryString, PaginatedResult, encodePathSegment } from './client.js';
 import { mapWithConcurrency, DEFAULT_DETAIL_FETCH_CONCURRENCY } from '../lib/concurrency.js';
 
 
@@ -20,7 +20,7 @@ export async function getRecipes(
 }
 
 export async function getRecipe(slug: string): Promise<Record<string, unknown>> {
-  return apiGet(`/api/recipes/${slug}`);
+  return apiGet(`/api/recipes/${encodePathSegment(slug, 'slug')}`);
 }
 
 interface SettledResult {
@@ -70,18 +70,18 @@ export async function patchRecipe(
   slug: string,
   data: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
-  return apiPatch(`/api/recipes/${slug}`, data);
+  return apiPatch(`/api/recipes/${encodePathSegment(slug, 'slug')}`, data);
 }
 
 export async function duplicateRecipe(
   slug: string,
   name?: string,
 ): Promise<Record<string, unknown>> {
-  return apiPost(`/api/recipes/${slug}/duplicate`, name ? { name } : undefined);
+  return apiPost(`/api/recipes/${encodePathSegment(slug, 'slug')}/duplicate`, name ? { name } : undefined);
 }
 
 export async function updateRecipeLastMade(slug: string): Promise<Record<string, unknown>> {
-  return apiPatch(`/api/recipes/${slug}/last-made`, {
+  return apiPatch(`/api/recipes/${encodePathSegment(slug, 'slug')}/last-made`, {
     timestamp: new Date().toISOString(),
   });
 }
@@ -90,7 +90,7 @@ export async function setRecipeImageFromUrl(
   slug: string,
   url: string,
 ): Promise<Record<string, unknown>> {
-  return apiPost(`/api/recipes/${slug}/image`, { url });
+  return apiPost(`/api/recipes/${encodePathSegment(slug, 'slug')}/image`, { url });
 }
 
 // PUT /api/recipes/{slug}/image takes multipart form data: `image` (file bytes) and `extension`.
@@ -102,22 +102,22 @@ export async function uploadRecipeImage(
   const form = new FormData();
   form.append('image', new Blob([image]), `image.${extension}`);
   form.append('extension', extension);
-  return apiPutForm(`/api/recipes/${slug}/image`, form);
+  return apiPutForm(`/api/recipes/${encodePathSegment(slug, 'slug')}/image`, form);
 }
 
 export async function deleteRecipeImage(slug: string): Promise<Record<string, unknown>> {
-  return apiDelete(`/api/recipes/${slug}/image`);
+  return apiDelete(`/api/recipes/${encodePathSegment(slug, 'slug')}/image`);
 }
 
 export async function deleteRecipe(slug: string): Promise<Record<string, unknown>> {
-  return apiDelete(`/api/recipes/${slug}`);
+  return apiDelete(`/api/recipes/${encodePathSegment(slug, 'slug')}`);
 }
 
 export async function updateRecipe(
   slug: string,
   data: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
-  return apiPut(`/api/recipes/${slug}`, data);
+  return apiPut(`/api/recipes/${encodePathSegment(slug, 'slug')}`, data);
 }
 
 export interface RecipeSuggestionItem {

@@ -1,4 +1,4 @@
-import { apiGet, apiPost, apiPut, apiDelete, formatParams, MealieApiError, PaginatedResult } from './client.js';
+import { apiGet, apiPost, apiPut, apiDelete, formatParams, MealieApiError, PaginatedResult, encodePathSegment } from './client.js';
 import {
   lookupCandidates,
   LookupValidationError,
@@ -44,7 +44,7 @@ export async function getTool(toolId: string): Promise<Record<string, unknown>> 
   }
 
   try {
-    return await apiGet<Record<string, unknown>>(`/api/organizers/tools/${id}`);
+    return await apiGet<Record<string, unknown>>(`/api/organizers/tools/${encodePathSegment(id, 'id')}`);
   } catch (error) {
     if (error instanceof MealieApiError && error.status === 404) {
       wrapError(`Tool not found: ${id}`, error);
@@ -80,7 +80,7 @@ export async function updateTool(toolId: string, input: UpdateToolInput): Promis
   }
 
   try {
-    const existing = await apiGet<Record<string, unknown>>(`/api/organizers/tools/${id}`);
+    const existing = await apiGet<Record<string, unknown>>(`/api/organizers/tools/${encodePathSegment(id, 'id')}`);
 
     const payload: Record<string, unknown> = {};
     for (const field of UPDATABLE_TOOL_FIELDS) {
@@ -88,7 +88,7 @@ export async function updateTool(toolId: string, input: UpdateToolInput): Promis
     }
     payload.name = name;
 
-    return await apiPut<Record<string, unknown>>(`/api/organizers/tools/${id}`, payload);
+    return await apiPut<Record<string, unknown>>(`/api/organizers/tools/${encodePathSegment(id, 'id')}`, payload);
   } catch (error) {
     if (error instanceof MealieApiError && error.status === 404) {
       wrapError(`Tool not found: ${id}`, error);
@@ -104,7 +104,7 @@ export async function deleteTool(toolId: string): Promise<Record<string, unknown
   }
 
   try {
-    return await apiDelete<Record<string, unknown>>(`/api/organizers/tools/${id}`);
+    return await apiDelete<Record<string, unknown>>(`/api/organizers/tools/${encodePathSegment(id, 'id')}`);
   } catch (error) {
     if (error instanceof MealieApiError && error.status === 404) {
       wrapError(`Tool not found: ${id}`, error);

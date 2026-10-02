@@ -52,7 +52,7 @@ export function registerCategoryTools(server: McpServer): void {
   server.tool(
     'get_category',
     'Retrieves a single category by its UUID.',
-    { categoryId: z.string() },
+    { categoryId: z.string().uuid() },
     async (params) => {
       try {
         const result = await categoriesApi.getCategory(params.categoryId);
@@ -82,7 +82,7 @@ export function registerCategoryTools(server: McpServer): void {
   server.tool(
     'update_category',
     'Updates a category\'s name.',
-    { categoryId: z.string(), name: z.string().optional() },
+    { categoryId: z.string().uuid(), name: z.string().optional() },
     async (params) => {
       try {
         const data: Record<string, unknown> = {};
@@ -99,7 +99,7 @@ export function registerCategoryTools(server: McpServer): void {
   server.tool(
     'delete_category',
     'Deletes a category. Mealie may refuse if recipes still reference it.',
-    { categoryId: z.string() },
+    { categoryId: z.string().uuid() },
     async (params) => {
       try {
         const result = await categoriesApi.deleteCategory(params.categoryId);
