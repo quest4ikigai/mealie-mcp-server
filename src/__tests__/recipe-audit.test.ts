@@ -15,6 +15,10 @@ const mockedGetRecipe = vi.mocked(recipesApi.getRecipe);
 describe('classifyIngredient', () => {
   it('classifies by field presence only', () => {
     expect(classifyIngredient({ title: 'Sauce' })).toBe('section');
+    expect(classifyIngredient({ title: 'Crust', food: { id: 'f' }, unit: null, quantity: 1 })).toBe('partial');
+    expect(classifyIngredient({ title: 'Wraps', food: { id: 'f' }, unit: { id: 'u' }, quantity: 2 })).toBe('structured');
+    expect(classifyIngredient({ title: 'Extra', food: null, quantity: 2 })).toBe('unparsed');
+    expect(classifyIngredient({ title: 'Extra', food: null, note: 'x' })).toBe('unparsed');
     expect(classifyIngredient({ title: '', food: null, note: 'x' })).toBe('unparsed');
     expect(classifyIngredient({ food: { id: 'f' }, unit: null, quantity: 2 })).toBe('partial');
     expect(classifyIngredient({ food: { id: 'f' }, unit: null, quantity: 0 })).toBe('structured');
