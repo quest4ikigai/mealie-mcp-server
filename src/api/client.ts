@@ -39,11 +39,14 @@ async function request<T>(
   options: RequestInit = {},
 ): Promise<T> {
   const url = `${config.baseUrl}${path}`;
+  // FormData bodies must not get a JSON Content-Type: fetch sets the multipart boundary itself.
+  const defaultHeaders: Record<string, string> =
+    options.body instanceof FormData ? {} : { 'Content-Type': 'application/json' };
   const res = await fetch(url, {
     ...options,
     headers: {
       Authorization: `Bearer ${config.apiKey}`,
-      'Content-Type': 'application/json',
+      ...defaultHeaders,
       ...options.headers,
     },
   });
@@ -94,6 +97,13 @@ export function apiPut<T>(path: string, body: unknown): Promise<T> {
   return request<T>(path, {
     method: 'PUT',
     body: JSON.stringify(body),
+  });
+}
+
+export function apiPutForm<T>(path: string, body: FormData): Promise<T> {
+  return request<T>(path, {
+    method: 'PUT',
+    body,
   });
 }
 
