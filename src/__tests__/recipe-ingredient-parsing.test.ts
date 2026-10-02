@@ -427,6 +427,14 @@ describe('section titles are decoupled from parsing state', () => {
     expect(await run([heading], 'partially_parsed')).toHaveLength(0);
   });
 
+  it('treats a heading whose originalText equals its title as a section and excludes it from unparsed_only', async () => {
+    const heading = sectionIngredient({ title: 'For frying', originalText: 'For frying' });
+    const [item] = await run([heading], 'any');
+    expect(item.ingredients[0].parsingState).toBe('section');
+    expect(item.ingredientParsingState).toMatchObject({ unparsedCount: 0, sectionCount: 1 });
+    expect(await run([heading], 'unparsed_only')).toHaveLength(0);
+  });
+
   it('handles a mixed recipe', async () => {
     const rows = [
       sectionIngredient({ title: 'For frying' }),
