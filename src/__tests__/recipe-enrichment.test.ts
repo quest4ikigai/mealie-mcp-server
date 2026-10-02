@@ -197,6 +197,11 @@ describe('individual filter predicates', () => {
     expect(await slugs({ ingredientSections: false })).toEqual([]);
   });
 
+  it('ingredientParsing unparsed excludes a pure heading whose originalText equals its title', async () => {
+    setup([makeRecipe(1, { recipeIngredient: [{ ...section(), title: 'For frying', originalText: 'For frying' }, structured()] })]);
+    expect(await slugs({ ingredientParsing: 'unparsed' })).toEqual([]);
+  });
+
   it('instructionIngredientLinks missing / dangling / missing_or_dangling', async () => {
     const step = (refs: unknown[]) => [{ id: 'i', title: '', text: 'x', ingredientReferences: refs }];
     setup([

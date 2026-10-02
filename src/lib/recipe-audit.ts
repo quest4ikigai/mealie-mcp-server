@@ -55,13 +55,16 @@ function hasObject(value: unknown): boolean {
 
 /**
  * A pure section heading row: a non-empty `title` with no meaningful ingredient payload (no food,
- * unit, positive quantity, note, display, or originalText). Schema-only; never reads text meaning.
+ * unit, positive quantity, note, or display, and an `originalText` that is empty or identical to the
+ * title). Schema-only; never reads text meaning.
  */
 export function isPureIngredientSectionRow(raw: Record<string, unknown>): boolean {
   if (!str(raw.title)) return false;
   if (hasObject(raw.food) || hasObject(raw.unit)) return false;
   if (typeof raw.quantity === 'number' && raw.quantity > 0) return false;
-  return !str(raw.note) && !str(raw.display) && !str(raw.originalText);
+  const originalText = str(raw.originalText);
+  const originalTextIsHeadingOnly = !originalText || originalText === str(raw.title);
+  return !str(raw.note) && !str(raw.display) && originalTextIsHeadingOnly;
 }
 
 /**
@@ -87,9 +90,11 @@ export function isPureIngredientSectionRow(raw: Record<string, unknown>): boolea
  *    number (e.g. a garnish like "avocado, diced, for serving" with no meaningful quantity).
  *
  * `originalText` was investigated as a potential "this came from unparsed source text" signal but
- * discarded: on a live instance it was null on every observed ingredient, both fully structured
+ * discarded: on a live instance it was null on the observed real ingredients, both fully structured
  * and completely unparsed alike — imported/scraped recipes put the raw line straight into `note`/
- * `display` instead. It is not a reliable signal and is not used for classification.
+ * `display` instead. (Mealie can also store a heading's own title there, which is why a pure
+ * heading may carry `originalText` equal to its `title`.) It is not used to detect unparsed
+ * ingredients; it only matters for the pure-heading check above.
  *
  * "free_form" (a deliberately non-food entry, e.g. "extra napkins") is NOT a distinct state:
  * nothing in the schema distinguishes it from a genuinely unparsed food ingredient (both are
