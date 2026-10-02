@@ -528,7 +528,7 @@ The intended workflow:
 
 - `limit` — 1-50, default 25.
 - `state` — which recipes to include, default `"unparsed_only"`:
-  - `"unparsed_only"` — at least one ingredient has no associated food.
+  - `"unparsed_only"` — at least one non-section ingredient has no associated food (pure section headings are excluded).
   - `"partially_parsed"` — at least one ingredient has a food but no unit despite a positive quantity (see the false-positive caveat below).
   - `"any"` — no filtering; every scanned recipe is returned, useful for auditing.
 
