@@ -630,7 +630,7 @@ export function registerRecipeTools(server: McpServer) {
       'get_recipes_for_classification); use this queue for several enrichment dimensions in one pass or for ' +
       'broad "clean up / enrich my recipes" requests with its default filters, paging until hasMore is false ' +
       'unless the user narrows scope. Never broaden a specific request into comprehensive cleanup. Filters: ' +
-      'ingredientParsing ("unparsed" = some ingredient has no food; "partial" = some ingredient has a food and ' +
+      'ingredientParsing ("unparsed" = some non-heading ingredient has no food — pure section headings excluded; "partial" = some ingredient has a food and ' +
       'positive quantity but no unit — coarse signal; "unparsed_or_partial"), ingredientSections (true = has ' +
       'section headings; false = has ingredients but no section headings — recipes with zero ingredients never ' +
       'match false), instructionIngredientLinks ("missing" = has instructions but none reference an ingredient; ' +
