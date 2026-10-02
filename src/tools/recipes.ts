@@ -544,7 +544,7 @@ export function registerRecipeTools(server: McpServer) {
       'quantity is actually used (e.g. whether "3 cups + 2 tbsp flour" is one combined amount or two separate ' +
       'uses) — this tool does not decide that, it only supplies the text. Each ingredient includes a ' +
       'deterministic, schema-only "parsingState": "section" (a pure Mealie ingredient-section heading: a ' +
-      'non-empty title with no food, unit, positive quantity, note, display, or originalText — never counted as ' +
+      'non-empty title with no food, unit, positive quantity, note, display, or originalText other than the title itself — never counted as ' +
       'needing parsing; a title on a row that also carries an ingredient payload does NOT make it a section and ' +
       'the row is classified by its own state), "unparsed" (no food is associated — the primary, ' +
       'high-confidence signal), "partial" (a food is associated but no unit, while quantity is a positive number ' +
