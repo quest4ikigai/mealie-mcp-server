@@ -1,8 +1,7 @@
-import * as recipesApi from '../api/recipes.js';
 import { mapWithConcurrency, DEFAULT_DETAIL_FETCH_CONCURRENCY } from './concurrency.js';
+import { auditTaxonomy, fetchRecipeDetail, nextCursorFor, type TaxonomyFacts } from './recipe-audit.js';
 import {
   scanRecipesStable,
-  encodeCursor,
   decodeCursor,
   str,
   idString,
@@ -80,9 +79,9 @@ export class InvalidLimitError extends SharedInvalidLimitError {
   }
 }
 
-function matchesTaxonomyState(categories: unknown[], tags: unknown[], state: TaxonomyState): boolean {
-  const categoriesEmpty = categories.length === 0;
-  const tagsEmpty = tags.length === 0;
+function matchesTaxonomyState(facts: TaxonomyFacts, state: TaxonomyState): boolean {
+  const categoriesEmpty = facts.categoryCount === 0;
+  const tagsEmpty = facts.tagCount === 0;
   switch (state) {
     case 'any':
       return true;
@@ -225,9 +224,7 @@ export async function getRecipesForClassification(
     scannedCount++;
     lastScanned = entry;
 
-    const categories = toArray(entry.summary.recipeCategory);
-    const tags = toArray(entry.summary.tags);
-    if (matchesTaxonomyState(categories, tags, taxonomyState)) {
+    if (matchesTaxonomyState(auditTaxonomy(entry.summary), taxonomyState)) {
       matched.push(entry);
     }
 
@@ -251,20 +248,7 @@ export async function getRecipesForClassification(
   const failures: ClassificationFailure[] = [];
   const items: RecipeForClassification[] = [];
 
-  const detailResults = await mapWithConcurrency(matched, DEFAULT_DETAIL_FETCH_CONCURRENCY, async (entry) => {
-    const slug = str(entry.summary.slug) || entry.id;
-    try {
-      const detail = await recipesApi.getRecipe(slug);
-      return { success: true as const, detail };
-    } catch (error) {
-      return {
-        success: false as const,
-        slug: slug || undefined,
-        id: entry.id || undefined,
-        error: error instanceof Error ? error.message : String(error),
-      };
-    }
-  });
+  const detailResults = await mapWithConcurrency(matched, DEFAULT_DETAIL_FETCH_CONCURRENCY, fetchRecipeDetail);
   debugLog('detail fetch phase', { ms: now() - fetchStartedAt, count: matched.length, concurrency: DEFAULT_DETAIL_FETCH_CONCURRENCY });
 
   const transformStartedAt = now();
@@ -278,10 +262,7 @@ export async function getRecipesForClassification(
   debugLog('transform phase', { ms: now() - transformStartedAt });
 
   const hasMore = stopReason !== 'exhausted';
-  const nextCursor =
-    hasMore && lastScanned
-      ? encodeCursor({ v: 1, lastCreatedAt: lastScanned.createdAt, lastId: lastScanned.id, page: lastScanned.page })
-      : null;
+  const nextCursor = nextCursorFor(lastScanned, hasMore);
 
   return {
     items,

@@ -364,7 +364,7 @@ describe('per-ingredient parsingState classification', () => {
       },
     ];
 
-    it.each(cases)('counts sum to totalCount for: $name', async ({ ingredients }) => {
+    it.each(cases)('totalCount equals stored rows and sectionCount counts titled rows for: $name', async ({ ingredients }) => {
       const r1 = recipe(1, ingredients);
       setupServer([r1.summary], { [r1.detail.slug as string]: r1.detail });
 
@@ -372,8 +372,85 @@ describe('per-ingredient parsingState classification', () => {
       const counts = result.items[0].ingredientParsingState;
 
       expect(counts.totalCount).toBe(ingredients.length);
-      expect(counts.unparsedCount + counts.partialCount + counts.structuredCount + counts.sectionCount).toBe(counts.totalCount);
+      // Section titles are orthogonal to parsing state, so the counts are not expected to sum to totalCount.
+      expect(counts.sectionCount).toBe(ingredients.filter((i) => i.title).length);
     });
+  });
+});
+
+describe('section titles are decoupled from parsing state', () => {
+  const titled = (overrides: Record<string, unknown>) => ({ title: 'Crust', referenceId: 'ref-t', ...overrides });
+
+  async function run(ingredients: Record<string, unknown>[], state: 'unparsed_only' | 'partially_parsed' | 'any') {
+    const r1 = recipe(1, ingredients);
+    setupServer([r1.summary], { [r1.detail.slug as string]: r1.detail });
+    const result = await getRecipesForIngredientParsing({ state });
+    return result.items;
+  }
+
+  it('classifies a titled structured ingredient as structured and counts the section', async () => {
+    const [item] = await run([structuredIngredient(titled({}))], 'any');
+    expect(item.ingredients[0].parsingState).toBe('structured');
+    expect(item.ingredientParsingState).toMatchObject({ structuredCount: 1, sectionCount: 1, totalCount: 1 });
+  });
+
+  it('classifies a titled partial ingredient as partial and matches partially_parsed', async () => {
+    const row = partialIngredient(titled({ quantity: 1, food: { id: 'f-crust', name: 'pie crust' } }));
+    const [item] = await run([row], 'partially_parsed');
+    expect(item.ingredients[0].parsingState).toBe('partial');
+    expect(item.ingredientParsingState).toMatchObject({ partialCount: 1, sectionCount: 1 });
+  });
+
+  it.each([
+    ['positive quantity', { quantity: 2, note: '', display: '' }],
+    ['note', { quantity: 0, note: 'to taste', display: '' }],
+    ['display', { quantity: 0, note: '', display: 'some thing' }],
+    ['originalText', { quantity: 0, note: '', display: '', originalText: 'raw' }],
+  ])('classifies a titled food-less ingredient with %s as unparsed and matches unparsed_only', async (_n, payload) => {
+    const [item] = await run([unparsedIngredient(titled(payload))], 'unparsed_only');
+    expect(item.ingredients[0].parsingState).toBe('unparsed');
+    expect(item.ingredientParsingState).toMatchObject({ unparsedCount: 1, sectionCount: 1 });
+  });
+
+  it('keeps a pure heading row as section and does not match parsing queues', async () => {
+    const heading = sectionIngredient({ title: 'For frying' });
+    const items = await run([heading], 'any');
+    expect(items[0].ingredients[0].parsingState).toBe('section');
+    expect(items[0].ingredientParsingState).toEqual({
+      totalCount: 1,
+      sectionCount: 1,
+      unparsedCount: 0,
+      partialCount: 0,
+      structuredCount: 0,
+    });
+    expect(await run([heading], 'unparsed_only')).toHaveLength(0);
+    expect(await run([heading], 'partially_parsed')).toHaveLength(0);
+  });
+
+  it('treats a heading whose originalText equals its title as a section and excludes it from unparsed_only', async () => {
+    const heading = sectionIngredient({ title: 'For frying', originalText: 'For frying' });
+    const [item] = await run([heading], 'any');
+    expect(item.ingredients[0].parsingState).toBe('section');
+    expect(item.ingredientParsingState).toMatchObject({ unparsedCount: 0, sectionCount: 1 });
+    expect(await run([heading], 'unparsed_only')).toHaveLength(0);
+  });
+
+  it('handles a mixed recipe', async () => {
+    const rows = [
+      sectionIngredient({ title: 'For frying' }),
+      partialIngredient(titled({ quantity: 1 })),
+      structuredIngredient(),
+    ];
+    const [item] = await run(rows, 'partially_parsed');
+    expect(item.ingredients.map((i) => i.parsingState)).toEqual(['section', 'partial', 'structured']);
+    expect(item.ingredientParsingState).toEqual({
+      totalCount: 3,
+      sectionCount: 2,
+      unparsedCount: 0,
+      partialCount: 1,
+      structuredCount: 1,
+    });
+    expect(await run(rows, 'unparsed_only')).toHaveLength(0);
   });
 });
 

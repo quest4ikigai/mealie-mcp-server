@@ -1,8 +1,11 @@
-import * as recipesApi from '../api/recipes.js';
-import { mapWithConcurrency, DEFAULT_DETAIL_FETCH_CONCURRENCY } from './concurrency.js';
 import {
-  scanRecipesStable,
-  encodeCursor,
+  classifyIngredient,
+  scanAuditedRecipes,
+  type ClockOptions,
+  type IngredientParsingCounts,
+  type IngredientState,
+} from './recipe-audit.js';
+import {
   decodeCursor,
   str,
   idString,
@@ -10,27 +13,12 @@ import {
   toTaxonomyItem,
   InvalidCursorError,
   InvalidLimitError as SharedInvalidLimitError,
-  type ScannedRecipe,
   type TaxonomyItem,
 } from './recipe-scan.js';
 
 export const INGREDIENT_PARSING_DEFAULT_LIMIT = 25;
 export const INGREDIENT_PARSING_MAX_LIMIT = 50;
 export const INGREDIENT_PARSING_DEFAULT_STATE: IngredientParsingQueryState = 'unparsed_only';
-
-// Unlike classification (which can filter cheaply from the list endpoint's embedded
-// recipeCategory/tags), Mealie's recipe list endpoint does not include recipeIngredient — the
-// only way to know whether a recipe needs ingredient parsing is to fetch its full detail. That
-// means detail must be fetched for every scanned recipe, not just matches, so the fetch happens
-// in small concurrent batches while scanning (see DETAIL_FETCH_BATCH_SIZE below) instead of
-// after a cheap pre-filter pass.
-const DETAIL_FETCH_BATCH_SIZE = 20;
-
-// Soft internal budget: because every scanned recipe requires a detail fetch (see above), a
-// library where only a small fraction of recipes need parsing can take a while to accumulate a
-// full page of matches. Stop and hand back a partial page with a cursor rather than risking an
-// MCP gateway timeout.
-const DEFAULT_DEADLINE_MS = 20_000;
 
 function debugLog(...args: unknown[]): void {
   if (process.env.MEALIE_MCP_DEBUG === 'true') {
@@ -50,8 +38,8 @@ export class InvalidLimitError extends SharedInvalidLimitError {
 /**
  * Which recipes to return, based purely on the deterministic per-ingredient `parsingState`
  * (see classifyIngredient below) — never on semantic interpretation of ingredient text:
- *  - "unparsed_only": at least one ingredient has no associated food (excluding section
- *    headings) — the strong, low-noise signal that a line still needs a food resolved.
+ *  - "unparsed_only": at least one ingredient has no associated food (excluding pure section
+ *    heading rows; a titled real ingredient still counts) — the strong, low-noise signal that a line still needs a food resolved.
  *  - "partially_parsed": at least one ingredient has a food but no unit (see classifyIngredient
  *    for the documented false-positive tradeoff this carries for legitimately unit-less
  *    countable foods like "4 eggs").
@@ -68,40 +56,7 @@ export class InvalidStateError extends Error {
   }
 }
 
-/**
- * Deterministic, schema-only classification of a single ingredient row. Mealie's RecipeIngredient
- * schema (confirmed against a live instance) exposes no explicit "isFood"/"disableAmount"/
- * "freeform" flag — only `title`, `quantity`, `unit`, `food`, `note`, `display`, `originalText`,
- * and `referenceId` are actually present on read. So the only reliable, non-linguistic signals
- * available are field *presence*, not text content:
- *  - "section": `title` is non-empty. This is Mealie's own documented mechanism for ingredient
- *    section headers (e.g. "For the sauce") — a heading row normally carries no food/unit/note of
- *    its own. Section rows are never counted as needing parsing.
- *  - "unparsed": `title` is empty and `food` is null. This is the primary, high-confidence signal
- *    the tool is built around — Mealie itself has not linked this line to any food.
- *  - "partial": `food` is present but `unit` is null and `quantity` is a positive number. KNOWN,
- *    DOCUMENTED LIMITATION: this cannot be distinguished, without linguistic parsing of the
- *    ingredient text, from a fully-and-correctly-structured count-based ingredient that simply
- *    has no unit (e.g. "4 eggs", "2 lemons", "1 pie crust" — all observed as unit: null on a real
- *    Mealie instance despite being completely resolved). Expect false positives here; treat
- *    "partial" as a coarse audit signal, not a confirmed defect.
- *  - "structured": food is present and either a unit is present, or quantity is not a positive
- *    number (e.g. a garnish like "avocado, diced, for serving" with no meaningful quantity).
- *
- * `originalText` was investigated as a potential "this came from unparsed source text" signal but
- * discarded: on a live instance it was null on every observed ingredient, both fully structured
- * and completely unparsed alike — imported/scraped recipes put the raw line straight into `note`/
- * `display` instead. It is not a reliable signal and is not used for classification.
- *
- * "free_form" (a deliberately non-food entry, e.g. "extra napkins") was in scope to investigate
- * but is NOT implemented as a distinct state: nothing in the schema distinguishes it from a
- * genuinely unparsed food ingredient (both are food: null, title: empty, with text in note/
- * display). Rather than fabricate a distinction the data doesn't support, such rows are
- * classified as "unparsed" like any other food-less ingredient — conservative in the sense that
- * a recipe with only a couple of deliberately free-form lines will still surface for review
- * rather than being silently skipped.
- */
-export type IngredientState = 'section' | 'unparsed' | 'partial' | 'structured';
+export type { IngredientState, IngredientParsingCounts };
 
 export interface CompactRef {
   id: string;
@@ -125,14 +80,6 @@ export interface CompactInstruction {
   title: string;
   text: string;
   ingredientReferences: unknown[];
-}
-
-export interface IngredientParsingCounts {
-  totalCount: number;
-  structuredCount: number;
-  partialCount: number;
-  unparsedCount: number;
-  sectionCount: number;
 }
 
 export interface RecipeForIngredientParsing {
@@ -179,19 +126,6 @@ function toCompactRef(raw: unknown): CompactRef | null {
   return { id: idString(r.id), name: str(r.name) };
 }
 
-function classifyIngredient(raw: Record<string, unknown>): IngredientState {
-  if (str(raw.title)) return 'section';
-
-  const hasFood = raw.food !== null && raw.food !== undefined && typeof raw.food === 'object';
-  if (!hasFood) return 'unparsed';
-
-  const hasUnit = raw.unit !== null && raw.unit !== undefined && typeof raw.unit === 'object';
-  const quantity = typeof raw.quantity === 'number' ? raw.quantity : null;
-  if (!hasUnit && quantity !== null && quantity > 0) return 'partial';
-
-  return 'structured';
-}
-
 function toCompactIngredient(raw: Record<string, unknown>): CompactIngredient {
   return {
     referenceId: idString(raw.referenceId),
@@ -216,33 +150,6 @@ function toCompactInstruction(raw: Record<string, unknown>): CompactInstruction 
   };
 }
 
-function countIngredientStates(ingredients: CompactIngredient[]): IngredientParsingCounts {
-  const counts: IngredientParsingCounts = {
-    totalCount: ingredients.length,
-    structuredCount: 0,
-    partialCount: 0,
-    unparsedCount: 0,
-    sectionCount: 0,
-  };
-  for (const ingredient of ingredients) {
-    switch (ingredient.parsingState) {
-      case 'structured':
-        counts.structuredCount++;
-        break;
-      case 'partial':
-        counts.partialCount++;
-        break;
-      case 'unparsed':
-        counts.unparsedCount++;
-        break;
-      case 'section':
-        counts.sectionCount++;
-        break;
-    }
-  }
-  return counts;
-}
-
 function matchesQueryState(counts: IngredientParsingCounts, state: IngredientParsingQueryState): boolean {
   switch (state) {
     case 'any':
@@ -258,7 +165,7 @@ function matchesQueryState(counts: IngredientParsingCounts, state: IngredientPar
   }
 }
 
-function toCompactRecipe(raw: Record<string, unknown>): RecipeForIngredientParsing {
+function toCompactRecipe(raw: Record<string, unknown>, counts: IngredientParsingCounts): RecipeForIngredientParsing {
   const ingredients = toArray(raw.recipeIngredient).map(toCompactIngredient);
   const instructions = toArray(raw.recipeInstructions).map(toCompactInstruction);
   return {
@@ -275,13 +182,8 @@ function toCompactRecipe(raw: Record<string, unknown>): RecipeForIngredientParsi
     yield: str(raw.recipeYield) || null,
     ingredients,
     instructions,
-    ingredientParsingState: countIngredientStates(ingredients),
+    ingredientParsingState: counts,
   };
-}
-
-interface ClockOptions {
-  now?: () => number;
-  deadlineMs?: number;
 }
 
 function validateLimit(limit: number | undefined): number {
@@ -298,24 +200,6 @@ function validateState(state: IngredientParsingQueryState | undefined): Ingredie
     throw new InvalidStateError(state);
   }
   return state;
-}
-
-async function pullBatch(iterator: AsyncGenerator<ScannedRecipe, void, undefined>, size: number): Promise<ScannedRecipe[]> {
-  const batch: ScannedRecipe[] = [];
-  for (let i = 0; i < size; i++) {
-    const { value, done } = await iterator.next();
-    if (done) break;
-    batch.push(value);
-  }
-  return batch;
-}
-
-interface DetailFetchResult {
-  entry: ScannedRecipe;
-  success: boolean;
-  detail?: Record<string, unknown>;
-  slug?: string;
-  error?: string;
 }
 
 /**
@@ -338,90 +222,29 @@ export async function getRecipesForIngredientParsing(
   const state = validateState(input.state);
   const startCursor = input.cursor ? decodeCursor(input.cursor) : null;
 
-  const now = clock.now ?? Date.now;
-  const deadline = now() + (clock.deadlineMs ?? DEFAULT_DEADLINE_MS);
-
-  const iterator = scanRecipesStable(startCursor);
-  const matched: RecipeForIngredientParsing[] = [];
-  const failures: IngredientParsingFailure[] = [];
-  let scannedCount = 0;
-  let lastScanned: ScannedRecipe | null = null;
-  let stopReason: 'limit' | 'deadline' | 'exhausted' = 'exhausted';
-
-  const scanStartedAt = now();
-
-  outer: for (;;) {
-    const batch = await pullBatch(iterator, DETAIL_FETCH_BATCH_SIZE);
-    if (batch.length === 0) {
-      stopReason = 'exhausted';
-      break;
-    }
-
-    const results = await mapWithConcurrency<ScannedRecipe, DetailFetchResult>(
-      batch,
-      DEFAULT_DETAIL_FETCH_CONCURRENCY,
-      async (entry) => {
-        const slug = str(entry.summary.slug) || entry.id;
-        try {
-          const detail = await recipesApi.getRecipe(slug);
-          return { entry, success: true, detail };
-        } catch (error) {
-          return {
-            entry,
-            success: false,
-            slug: slug || undefined,
-            error: error instanceof Error ? error.message : String(error),
-          };
-        }
-      },
-    );
-
-    for (const result of results) {
-      scannedCount++;
-      lastScanned = result.entry;
-
-      if (!result.success || !result.detail) {
-        failures.push({ slug: result.slug, id: result.entry.id || undefined, error: result.error ?? 'Unknown error' });
-        continue;
-      }
-
-      const compact = toCompactRecipe(result.detail);
-      if (matchesQueryState(compact.ingredientParsingState, state)) {
-        matched.push(compact);
-      }
-
-      if (matched.length >= limit) {
-        stopReason = 'limit';
-        break outer;
-      }
-    }
-
-    if (now() > deadline) {
-      stopReason = 'deadline';
-      break;
-    }
-  }
-
-  debugLog('scan phase', {
-    ms: now() - scanStartedAt,
-    scannedCount,
-    matchedCount: matched.length,
-    failureCount: failures.length,
-    stopReason,
+  const scanStartedAt = (clock.now ?? Date.now)();
+  const scan = await scanAuditedRecipes<RecipeForIngredientParsing>({
+    startCursor,
+    limit,
+    clock,
+    matches: (audit) => matchesQueryState(audit.ingredients, state),
+    toItem: (detail, audit) => toCompactRecipe(detail, audit.ingredients),
   });
 
-  const hasMore = stopReason !== 'exhausted';
-  const nextCursor =
-    hasMore && lastScanned
-      ? encodeCursor({ v: 1, lastCreatedAt: lastScanned.createdAt, lastId: lastScanned.id, page: lastScanned.page })
-      : null;
+  debugLog('scan phase', {
+    ms: (clock.now ?? Date.now)() - scanStartedAt,
+    scannedCount: scan.scannedCount,
+    matchedCount: scan.items.length,
+    failureCount: scan.failures.length,
+    stopReason: scan.stopReason,
+  });
 
   return {
-    items: matched,
-    failures,
-    nextCursor,
-    scannedCount,
-    returnedCount: matched.length,
-    hasMore,
+    items: scan.items,
+    failures: scan.failures,
+    nextCursor: scan.nextCursor,
+    scannedCount: scan.scannedCount,
+    returnedCount: scan.items.length,
+    hasMore: scan.hasMore,
   };
 }

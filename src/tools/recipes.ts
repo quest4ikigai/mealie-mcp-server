@@ -538,14 +538,18 @@ export function registerRecipeTools(server: McpServer) {
       'included because they can disambiguate an otherwise-ambiguous ingredient line or reveal how a compound ' +
       'quantity is actually used (e.g. whether "3 cups + 2 tbsp flour" is one combined amount or two separate ' +
       'uses) — this tool does not decide that, it only supplies the text. Each ingredient includes a ' +
-      'deterministic, schema-only "parsingState": "section" (a Mealie ingredient-section heading, identified by ' +
-      'a non-empty title — never counted as needing parsing), "unparsed" (no food is associated — the primary, ' +
+      'deterministic, schema-only "parsingState": "section" (a pure Mealie ingredient-section heading: a ' +
+      'non-empty title with no food, unit, positive quantity, note, display, or originalText other than the title itself — never counted as ' +
+      'needing parsing; a title on a row that also carries an ingredient payload does NOT make it a section and ' +
+      'the row is classified by its own state), "unparsed" (no food is associated — the primary, ' +
       'high-confidence signal), "partial" (a food is associated but no unit, while quantity is a positive number ' +
       '— NOTE: this also matches legitimately unit-less countable foods like "4 eggs" or "2 lemons", since ' +
       'Mealie\'s schema has no field distinguishing that from an incompletely-structured row; treat "partial" as ' +
       'a coarse audit signal, not a confirmed defect), or "structured" (fully resolved, or has no meaningful ' +
       'quantity to need a unit). Each recipe also includes an ingredientParsingState summary ' +
-      '(unparsedCount/partialCount/structuredCount/sectionCount/totalCount). Use "state" to choose the queue: ' +
+      '(unparsedCount/partialCount/structuredCount/sectionCount/totalCount); sectionCount independently counts ' +
+      'every row with a non-empty title, so a titled real ingredient counts in both its parsing count and ' +
+      'sectionCount and the counts need not sum to totalCount. Use "state" to choose the queue: ' +
       '"unparsed_only" (default) — recipes with at least one unparsed ingredient; "partially_parsed" — recipes ' +
       'with at least one partial ingredient; "any" — every scanned recipe, for auditing. Every scanned recipe ' +
       'needs a full detail fetch (Mealie\'s recipe list endpoint does not expose ingredients), fetched with ' +
@@ -584,7 +588,7 @@ export function registerRecipeTools(server: McpServer) {
         .optional()
         .describe(
           `Which recipes to include (default "${INGREDIENT_PARSING_DEFAULT_STATE}"): "unparsed_only" — at least ` +
-            'one ingredient has no associated food; "partially_parsed" — at least one ingredient has a food but ' +
+            'one non-section ingredient has no associated food (pure section headings are excluded); "partially_parsed" — at least one ingredient has a food but ' +
             'no unit despite a positive quantity (coarse signal, see tool description for its known false-positive ' +
             'tradeoff); "any" — no filtering, every scanned recipe is returned (useful for auditing).',
         ),
