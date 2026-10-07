@@ -1,4 +1,4 @@
-import { apiGet, apiPost, apiPut, apiDelete, formatParams, PaginatedResult } from '../api/client.js';
+import { apiGet, apiPost, apiPut, apiDelete, formatParams, PaginatedResult, encodePathSegment } from '../api/client.js';
 
 export function getMealplans(
   params?: { startDate?: string; endDate?: string; page?: number; perPage?: number },
@@ -25,13 +25,13 @@ export function getTodaysMealplan(): Promise<Record<string, unknown>> {
 }
 
 export function getMealplan(id: string): Promise<Record<string, unknown>> {
-  return apiGet<Record<string, unknown>>(`/api/households/mealplans/${id}`);
+  return apiGet<Record<string, unknown>>(`/api/households/mealplans/${encodePathSegment(id, 'id')}`);
 }
 
 export function updateMealplan(id: string, data: Record<string, unknown>): Promise<Record<string, unknown>> {
-  return apiPut<Record<string, unknown>>(`/api/households/mealplans/${id}`, data);
+  return apiPut<Record<string, unknown>>(`/api/households/mealplans/${encodePathSegment(id, 'id')}`, data);
 }
 
 export function deleteMealplan(id: string): Promise<Record<string, unknown>> {
-  return apiDelete<Record<string, unknown>>(`/api/households/mealplans/${id}`);
+  return apiDelete<Record<string, unknown>>(`/api/households/mealplans/${encodePathSegment(id, 'id')}`);
 }

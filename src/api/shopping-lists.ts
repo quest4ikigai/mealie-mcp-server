@@ -1,4 +1,4 @@
-import { apiGet, apiPost, apiPut, apiDelete, formatParams, PaginatedResult } from './client.js';
+import { apiGet, apiPost, apiPut, apiDelete, formatParams, PaginatedResult, encodePathSegment } from './client.js';
 
 export function getShoppingLists(
   params?: { page?: number; perPage?: number; search?: string },
@@ -14,18 +14,18 @@ export function createShoppingList(name: string): Promise<Record<string, unknown
 }
 
 export function getShoppingList(listId: string): Promise<Record<string, unknown>> {
-  return apiGet<Record<string, unknown>>(`/api/households/shopping/lists/${listId}`);
+  return apiGet<Record<string, unknown>>(`/api/households/shopping/lists/${encodePathSegment(listId, 'shopping list ID')}`);
 }
 
 export function updateShoppingList(
   listId: string,
   data: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
-  return apiPut<Record<string, unknown>>(`/api/households/shopping/lists/${listId}`, data);
+  return apiPut<Record<string, unknown>>(`/api/households/shopping/lists/${encodePathSegment(listId, 'shopping list ID')}`, data);
 }
 
 export function deleteShoppingList(listId: string): Promise<Record<string, unknown>> {
-  return apiDelete<Record<string, unknown>>(`/api/households/shopping/lists/${listId}`);
+  return apiDelete<Record<string, unknown>>(`/api/households/shopping/lists/${encodePathSegment(listId, 'shopping list ID')}`);
 }
 
 export function addRecipeToShoppingList(
@@ -34,7 +34,7 @@ export function addRecipeToShoppingList(
   recipeIncrementQuantity?: number,
 ): Promise<Record<string, unknown>> {
   return apiPost<Record<string, unknown>>(
-    `/api/households/shopping/lists/${listId}/recipe/${recipeId}`,
+    `/api/households/shopping/lists/${encodePathSegment(listId, 'shopping list ID')}/recipe/${encodePathSegment(recipeId, 'recipe ID')}`,
     recipeIncrementQuantity !== undefined ? { recipeIncrementQuantity } : undefined,
   );
 }
@@ -44,7 +44,7 @@ export function removeRecipeFromShoppingList(
   recipeId: string,
 ): Promise<Record<string, unknown>> {
   return apiPost<Record<string, unknown>>(
-    `/api/households/shopping/lists/${listId}/recipe/${recipeId}/delete`,
+    `/api/households/shopping/lists/${encodePathSegment(listId, 'shopping list ID')}/recipe/${encodePathSegment(recipeId, 'recipe ID')}/delete`,
   );
 }
 
@@ -78,11 +78,11 @@ export function updateShoppingListItem(
   itemId: string,
   data: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
-  return apiPut<Record<string, unknown>>(`/api/households/shopping/items/${itemId}`, data);
+  return apiPut<Record<string, unknown>>(`/api/households/shopping/items/${encodePathSegment(itemId, 'item ID')}`, data);
 }
 
 export function deleteShoppingListItem(itemId: string): Promise<Record<string, unknown>> {
-  return apiDelete<Record<string, unknown>>(`/api/households/shopping/items/${itemId}`);
+  return apiDelete<Record<string, unknown>>(`/api/households/shopping/items/${encodePathSegment(itemId, 'item ID')}`);
 }
 
 export function deleteShoppingListItemsBulk(

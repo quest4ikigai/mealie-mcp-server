@@ -1,4 +1,4 @@
-import { apiGet, apiPost, apiPut, apiDelete, formatParams, MealieApiError, PaginatedResult } from './client.js';
+import { apiGet, apiPost, apiPut, apiDelete, formatParams, MealieApiError, PaginatedResult, encodePathSegment } from './client.js';
 import {
   lookupCandidates,
   LookupValidationError,
@@ -73,7 +73,7 @@ export async function getFood(foodId: string): Promise<Record<string, unknown>> 
   }
 
   try {
-    return await apiGet<Record<string, unknown>>(`/api/foods/${id}`);
+    return await apiGet<Record<string, unknown>>(`/api/foods/${encodePathSegment(id, 'id')}`);
   } catch (error) {
     if (error instanceof MealieApiError && error.status === 404) {
       wrapError(`Food not found: ${id}`, error);
@@ -144,8 +144,8 @@ export async function updateFood(
   }
 
   try {
-    const existing = await apiGet<Record<string, unknown>>(`/api/foods/${id}`);
-    return await apiPut<Record<string, unknown>>(`/api/foods/${id}`, buildUpdatePayload(existing, input));
+    const existing = await apiGet<Record<string, unknown>>(`/api/foods/${encodePathSegment(id, 'id')}`);
+    return await apiPut<Record<string, unknown>>(`/api/foods/${encodePathSegment(id, 'id')}`, buildUpdatePayload(existing, input));
   } catch (error) {
     if (error instanceof MealieApiError && error.status === 404) {
       wrapError(`Food not found: ${id}`, error);
@@ -194,7 +194,7 @@ export async function deleteFood(foodId: string): Promise<Record<string, unknown
   }
 
   try {
-    return await apiDelete<Record<string, unknown>>(`/api/foods/${id}`);
+    return await apiDelete<Record<string, unknown>>(`/api/foods/${encodePathSegment(id, 'id')}`);
   } catch (error) {
     if (error instanceof MealieApiError && error.status === 404) {
       wrapError(`Food not found: ${id}`, error);
@@ -240,7 +240,7 @@ export async function mergeFoods(fromFoodId: string, toFoodId: string): Promise<
   }
 
   try {
-    await apiGet(`/api/foods/${fromId}`);
+    await apiGet(`/api/foods/${encodePathSegment(fromId, 'id')}`);
   } catch (error) {
     if (error instanceof MealieApiError && error.status === 404) {
       return getFood(toId);

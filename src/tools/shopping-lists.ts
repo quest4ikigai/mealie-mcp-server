@@ -66,7 +66,7 @@ export function registerShoppingListTools(server: McpServer): void {
   server.tool(
     'get_shopping_list',
     'Retrieves a shopping list by its UUID.',
-    { listId: z.string() },
+    { listId: z.string().uuid() },
     async (params) => {
       try {
         const result = await api.getShoppingList(params.listId);
@@ -81,7 +81,7 @@ export function registerShoppingListTools(server: McpServer): void {
   server.tool(
     'update_shopping_list',
     'Updates a shopping list\'s name.',
-    { listId: z.string(), name: z.string().optional() },
+    { listId: z.string().uuid(), name: z.string().optional() },
     async (params) => {
       try {
         const data: Record<string, unknown> = {};
@@ -98,7 +98,7 @@ export function registerShoppingListTools(server: McpServer): void {
   server.tool(
     'delete_shopping_list',
     'Deletes a shopping list.',
-    { listId: z.string() },
+    { listId: z.string().uuid() },
     async (params) => {
       try {
         const result = await api.deleteShoppingList(params.listId);
@@ -113,7 +113,7 @@ export function registerShoppingListTools(server: McpServer): void {
   server.tool(
     'add_recipe_to_shopping_list',
     'Adds a recipe\'s ingredients to a shopping list.',
-    { listId: z.string(), recipeId: z.string(), recipeIncrementQuantity: z.number().optional() },
+    { listId: z.string().uuid(), recipeId: z.string().uuid(), recipeIncrementQuantity: z.number().optional() },
     async (params) => {
       try {
         const result = await api.addRecipeToShoppingList(params.listId, params.recipeId, params.recipeIncrementQuantity);
@@ -128,7 +128,7 @@ export function registerShoppingListTools(server: McpServer): void {
   server.tool(
     'remove_recipe_from_shopping_list',
     'Removes a recipe\'s ingredients from a shopping list.',
-    { listId: z.string(), recipeId: z.string() },
+    { listId: z.string().uuid(), recipeId: z.string().uuid() },
     async (params) => {
       try {
         const result = await api.removeRecipeFromShoppingList(params.listId, params.recipeId);
@@ -159,7 +159,7 @@ export function registerShoppingListTools(server: McpServer): void {
     'create_shopping_list_item',
     'Creates a single shopping list item.',
     {
-      shoppingListId: z.string(),
+      shoppingListId: z.string().uuid(),
       note: z.string(),
       quantity: z.number().optional(),
       unitId: z.string().optional(),
@@ -195,7 +195,7 @@ export function registerShoppingListTools(server: McpServer): void {
   server.tool(
     'update_shopping_list_item',
     'Updates a shopping list item\'s note, quantity, or checked status.',
-    { itemId: z.string(), note: z.string().optional(), quantity: z.number().optional(), checked: z.boolean().optional() },
+    { itemId: z.string().uuid(), note: z.string().optional(), quantity: z.number().optional(), checked: z.boolean().optional() },
     async (params) => {
       try {
         const data: Record<string, unknown> = {};
@@ -214,7 +214,7 @@ export function registerShoppingListTools(server: McpServer): void {
   server.tool(
     'delete_shopping_list_item',
     'Deletes a single shopping list item.',
-    { itemId: z.string() },
+    { itemId: z.string().uuid() },
     async (params) => {
       try {
         const result = await api.deleteShoppingListItem(params.itemId);

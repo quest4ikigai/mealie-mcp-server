@@ -1,4 +1,4 @@
-import { apiGet, apiPost, apiPut, apiDelete, formatParams, PaginatedResult } from './client.js';
+import { apiGet, apiPost, apiPut, apiDelete, formatParams, PaginatedResult, encodePathSegment } from './client.js';
 
 export function getCategories(
   params?: { page?: number; perPage?: number; search?: string },
@@ -18,20 +18,20 @@ export function createCategory(name: string): Promise<Record<string, unknown>> {
 }
 
 export function getCategory(id: string): Promise<Record<string, unknown>> {
-  return apiGet<Record<string, unknown>>(`/api/organizers/categories/${id}`);
+  return apiGet<Record<string, unknown>>(`/api/organizers/categories/${encodePathSegment(id, 'id')}`);
 }
 
 export function getCategoryBySlug(slug: string): Promise<Record<string, unknown>> {
-  return apiGet<Record<string, unknown>>(`/api/organizers/categories/slug/${slug}`);
+  return apiGet<Record<string, unknown>>(`/api/organizers/categories/slug/${encodePathSegment(slug, 'slug')}`);
 }
 
 export function updateCategory(
   id: string,
   data: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
-  return apiPut<Record<string, unknown>>(`/api/organizers/categories/${id}`, data);
+  return apiPut<Record<string, unknown>>(`/api/organizers/categories/${encodePathSegment(id, 'id')}`, data);
 }
 
 export function deleteCategory(id: string): Promise<Record<string, unknown>> {
-  return apiDelete<Record<string, unknown>>(`/api/organizers/categories/${id}`);
+  return apiDelete<Record<string, unknown>>(`/api/organizers/categories/${encodePathSegment(id, 'id')}`);
 }
