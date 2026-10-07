@@ -52,7 +52,7 @@ export function registerTagTools(server: McpServer) {
   server.tool(
     'get_tag',
     'Retrieves a single tag by its UUID.',
-    { tagId: z.string() },
+    { tagId: z.string().uuid() },
     async (params) => {
       try {
         const result = await tagsApi.getTag(params.tagId);
@@ -82,7 +82,7 @@ export function registerTagTools(server: McpServer) {
   server.tool(
     'update_tag',
     'Updates a tag\'s name.',
-    { tagId: z.string(), name: z.string().optional() },
+    { tagId: z.string().uuid(), name: z.string().optional() },
     async (params) => {
       try {
         const data: Record<string, unknown> = {};
@@ -99,7 +99,7 @@ export function registerTagTools(server: McpServer) {
   server.tool(
     'delete_tag',
     'Deletes a tag. Mealie may refuse if recipes still reference it.',
-    { tagId: z.string() },
+    { tagId: z.string().uuid() },
     async (params) => {
       try {
         const result = await tagsApi.deleteTag(params.tagId);

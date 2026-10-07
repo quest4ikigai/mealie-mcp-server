@@ -114,3 +114,12 @@ Given that every scanned recipe costs a detail fetch, a sparse queue (few recipe
 ### The `partial` parsing-state heuristic's tradeoff, quantified
 
 The `"food present, unit absent, quantity positive"` heuristic behind `partial` (see [Workflows](./WORKFLOWS.md#what-each-ingredients-parsingstate-means-and-what-it-doesnt)) was checked against real recipes rather than assumed reasonable. A single ordinary, fully-structured recipe fetched during investigation (`lemon-chess-pie`) had 3 of its 9 ingredients — `"1 pie crust"`, `"4 eggs"`, `"4 lemons"` — as legitimately unit-less counts that this heuristic cannot distinguish from incomplete structuring, since there is no schema field recording "unit intentionally omitted". That's roughly a third of one recipe's ingredients, not a rare edge case; `partially_parsed` is documented as a coarse audit signal for exactly this reason, not a confirmed-defect filter.
+
+## Path segment safety
+
+Dynamic REST path components must be encoded as individual path segments before request
+construction. Every runtime value interpolated into an API route (slugs, IDs) goes through
+`encodePathSegment()` in `src/api/client.ts`, which rejects blank, `.` and `..` values and any
+value containing `/` or `\`, then applies `encodeURIComponent`. Slashes are rejected rather than
+encoded because a reverse proxy that decodes and normalizes paths would turn `..%2F` back into a
+traversal; no Mealie ID or slug contains them. Query strings are built separately and are not encoded with it.

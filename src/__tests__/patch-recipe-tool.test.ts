@@ -2,13 +2,17 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 
-vi.mock('../api/client.js', () => ({
-  apiGet: vi.fn(),
-  apiPost: vi.fn(),
-  apiPut: vi.fn(),
-  apiPatch: vi.fn(),
-  apiDelete: vi.fn(),
-}));
+vi.mock('../api/client.js', async () => {
+  const actual = await vi.importActual<typeof import('../api/client.js')>('../api/client.js');
+  return {
+    ...actual,
+    apiGet: vi.fn(),
+    apiPost: vi.fn(),
+    apiPut: vi.fn(),
+    apiPatch: vi.fn(),
+    apiDelete: vi.fn(),
+  };
+});
 
 import * as client from '../api/client.js';
 import { registerRecipeTools } from '../tools/recipes.js';

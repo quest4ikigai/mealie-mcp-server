@@ -62,7 +62,7 @@ export function registerFoodTools(server: McpServer): void {
   server.tool(
     'get_food',
     'Retrieves a single food by ID, including its aliases and label information when present.',
-    { foodId: z.string().describe('UUID of the food to retrieve.') },
+    { foodId: z.string().uuid().describe('UUID of the food to retrieve.') },
     async ({ foodId }) => {
       try {
         const result = await foodsApi.getFood(foodId);
@@ -148,7 +148,7 @@ export function registerFoodTools(server: McpServer): void {
       'householdsWithIngredientFood (household slugs for which the food is on hand) is replaced whole the same ' +
       'way: get_food first and edit the existing list.',
     {
-      foodId: z.string().describe('UUID of the food to update.'),
+      foodId: z.string().uuid().describe('UUID of the food to update.'),
       name: z.string().optional(),
       pluralName: z.string().optional(),
       description: z.string().optional(),
@@ -193,7 +193,7 @@ export function registerFoodTools(server: McpServer): void {
     'DESTRUCTIVE and irreversible: permanently deletes a food. Use get_food first to verify this is the exact ' +
       'food intended. Deleting a food may affect recipes and shopping list items that reference it — Mealie may ' +
       'refuse the deletion in that case, leaving the food intact.',
-    { foodId: z.string().describe('UUID of the food to delete.') },
+    { foodId: z.string().uuid().describe('UUID of the food to delete.') },
     async ({ foodId }) => {
       try {
         const result = await foodsApi.deleteFood(foodId);
@@ -214,8 +214,8 @@ export function registerFoodTools(server: McpServer): void {
       'moved, so find them with get_shopping_list_items and delete them first (delete_shopping_list_items_bulk). ' +
       'Use get_food first to verify both foods. Returns the target food.',
     {
-      fromFoodId: z.string().describe('UUID of the food to merge away; it is deleted.'),
-      toFoodId: z.string().describe('UUID of the food that remains and receives the references.'),
+      fromFoodId: z.string().uuid().describe('UUID of the food to merge away; it is deleted.'),
+      toFoodId: z.string().uuid().describe('UUID of the food that remains and receives the references.'),
     },
     async ({ fromFoodId, toFoodId }) => {
       try {

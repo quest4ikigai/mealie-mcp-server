@@ -34,6 +34,21 @@ export function formatParams(
   return result;
 }
 
+// Invariant: dynamic REST path components must be encoded as individual path segments before
+// request construction. Every runtime value interpolated into a route must go through this helper
+// so it cannot introduce '/', '..', '?' or '#' and navigate to a different endpoint. Query strings
+// are built separately (URLSearchParams / buildQueryString) and must not use this helper.
+// Values containing '/' or '\' are rejected outright rather than encoded: no Mealie ID or slug
+// contains them, and a reverse proxy that decodes and normalizes paths (e.g. nginx proxy_pass with
+// a URI part) would turn an encoded '..%2F' back into a traversal.
+export function encodePathSegment(value: string, label = 'path segment'): string {
+  const trimmed = typeof value === 'string' ? value.trim() : '';
+  if (!trimmed || trimmed === '.' || trimmed === '..' || /[/\\]/.test(trimmed)) {
+    throw new Error(`Invalid ${label}.`);
+  }
+  return encodeURIComponent(trimmed);
+}
+
 async function request<T>(
   path: string,
   options: RequestInit = {},
