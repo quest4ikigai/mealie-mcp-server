@@ -234,7 +234,7 @@ describe('replacement form', () => {
       ingredientReferences: [{ referenceId: ING_B }],
       noteReferences: [{ referenceId: NOTE }],
     });
-    expect((result.recipeInstructions as unknown[]).length).toBe(2);
+    expect(result.recipeInstructions as unknown[]).toHaveLength(2);
   });
 
   it('empty replacement clears instructions', async () => {

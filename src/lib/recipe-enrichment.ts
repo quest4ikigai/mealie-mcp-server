@@ -6,7 +6,6 @@ import {
   idString,
   toArray,
   toTaxonomyItem,
-  InvalidCursorError,
   InvalidLimitError as SharedInvalidLimitError,
   type TaxonomyItem,
 } from './recipe-scan.js';
@@ -14,7 +13,7 @@ import {
 export const ENRICHMENT_DEFAULT_LIMIT = 25;
 export const ENRICHMENT_MAX_LIMIT = 50;
 
-export { InvalidCursorError };
+export { InvalidCursorError } from './recipe-scan.js';
 
 export class InvalidLimitError extends SharedInvalidLimitError {
   constructor(limit: unknown) {
@@ -112,7 +111,7 @@ export interface GetRecipesForDataEnrichmentInput {
 
 const PARSING_VALUES: readonly string[] = ['unparsed', 'partial', 'unparsed_or_partial'];
 const LINKS_VALUES: readonly string[] = ['missing', 'dangling', 'missing_or_dangling'];
-const BOOLEAN_DIMENSIONS: readonly EnrichmentDimension[] = ['ingredientSections', 'tools', 'categories', 'tags', 'image'];
+const BOOLEAN_DIMENSIONS: ReadonlySet<EnrichmentDimension> = new Set(['ingredientSections', 'tools', 'categories', 'tags', 'image']);
 
 function debugLog(...args: unknown[]): void {
   if (process.env.MEALIE_MCP_DEBUG === 'true') {
@@ -154,18 +153,18 @@ export function resolveActiveFilters(filters: unknown): EnrichmentFilters {
     if (dim === 'ingredientParsing') {
       if (typeof value !== 'string' || !PARSING_VALUES.includes(value)) {
         throw new InvalidEnrichmentInputError(
-          `filters.ingredientParsing must be one of ${PARSING_VALUES.map((v) => `"${v}"`).join(', ')} (got ${JSON.stringify(value)}).`,
+          `filters.ingredientParsing must be one of ${PARSING_VALUES.map((v) => JSON.stringify(v)).join(', ')} (got ${JSON.stringify(value)}).`,
         );
       }
       active.ingredientParsing = value as IngredientParsingFilter;
     } else if (dim === 'instructionIngredientLinks') {
       if (typeof value !== 'string' || !LINKS_VALUES.includes(value)) {
         throw new InvalidEnrichmentInputError(
-          `filters.instructionIngredientLinks must be one of ${LINKS_VALUES.map((v) => `"${v}"`).join(', ')} (got ${JSON.stringify(value)}).`,
+          `filters.instructionIngredientLinks must be one of ${LINKS_VALUES.map((v) => JSON.stringify(v)).join(', ')} (got ${JSON.stringify(value)}).`,
         );
       }
       active.instructionIngredientLinks = value as InstructionIngredientLinksFilter;
-    } else if (BOOLEAN_DIMENSIONS.includes(dim)) {
+    } else if (BOOLEAN_DIMENSIONS.has(dim)) {
       if (typeof value !== 'boolean') {
         throw new InvalidEnrichmentInputError(`filters.${dim} must be a boolean (got ${JSON.stringify(value)}).`);
       }

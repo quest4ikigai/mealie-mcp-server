@@ -194,7 +194,7 @@ function extractToolDefinitions(filePath) {
       const name = evalConst(nameArg, sf);
       const description = descArg ? evalConst(descArg, sf) : '';
       if (typeof description !== 'string') {
-        throw new Error(`${name}: description must be a string`);
+        throw new TypeError(`${name}: description must be a string`);
       }
       const hasShape = shapeArg && !ts.isArrowFunction(unwrap(shapeArg)) && !ts.isFunctionExpression(unwrap(shapeArg));
       defs.push({ name, description, paramNames: hasShape ? shapeKeys(shapeArg, sf) : [] });

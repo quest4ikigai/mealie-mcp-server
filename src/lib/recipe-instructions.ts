@@ -298,7 +298,7 @@ function collectUpdates(
     if (!checkIndex(update.index, n, what, problems)) continue;
     if (updates.has(update.index)) problems.push(`${what}: index appears more than once in updateInstructions.`);
     if (removed.has(update.index)) problems.push(`${what}: instruction is both updated and removed.`);
-    if (update.text !== undefined && update.text.trim().length === 0) problems.push(`${what}: text must not be blank.`);
+    if (update.text?.trim().length === 0) problems.push(`${what}: text must not be blank.`);
     if (
       update.text === undefined &&
       update.title === undefined &&
