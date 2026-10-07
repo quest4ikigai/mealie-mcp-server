@@ -184,25 +184,25 @@ async function readBodyBounded(res: Response, maxBytes: number): Promise<Uint8Ar
   return bytes;
 }
 
-// Follows redirects up to the limit, re-validating and re-pinning every hop, and returns the first
-// non-redirect response.
+// Fetches `current`, following redirects one hop per call up to the limit. Every hop is re-validated
+// and re-pinned; the first non-redirect response is returned.
 async function fetchFollowingRedirects(
-  rawUrl: string,
+  current: string,
   resolve: HostResolver,
   transport: PinnedTransport,
   signal: AbortSignal,
+  hop = 0,
 ): Promise<Response> {
-  let current = rawUrl;
-  for (let hop = 0; hop <= DOWNLOAD_MAX_REDIRECTS; hop++) {
-    const { url, addresses } = await assertSafeUrl(current, resolve, signal);
-    const res = await transport(url, addresses, signal);
-    if (res.status < 300 || res.status >= 400) return res;
-    const location = res.headers.get('location');
-    await res.body?.cancel().catch(() => undefined);
-    if (!location) throw new Error(`Download failed: redirect ${res.status} without a Location header.`);
-    current = new URL(location, url).toString();
+  if (hop > DOWNLOAD_MAX_REDIRECTS) {
+    throw new Error(`Download failed: too many redirects (max ${DOWNLOAD_MAX_REDIRECTS}).`);
   }
-  throw new Error(`Download failed: too many redirects (max ${DOWNLOAD_MAX_REDIRECTS}).`);
+  const { url, addresses } = await assertSafeUrl(current, resolve, signal);
+  const res = await transport(url, addresses, signal);
+  if (res.status < 300 || res.status >= 400) return res;
+  const location = res.headers.get('location');
+  await res.body?.cancel().catch(() => undefined);
+  if (!location) throw new Error(`Download failed: redirect ${res.status} without a Location header.`);
+  return fetchFollowingRedirects(new URL(location, url).toString(), resolve, transport, signal, hop + 1);
 }
 
 export async function downloadBounded(
