@@ -68,7 +68,7 @@
 
 - `patch_recipe` — GET /api/recipes/{slug}, PATCH /api/recipes/{slug}
   Partially updates a recipe. Optional categories/tags/taxonomyMode/createMissing assign taxonomy; unchanged Category/Tag collections are never written and, if taxonomy is the only thing requested and nothing changes, no PATCH is issued and the current recipe is returned with taxonomyChanges. Optional instructions is the complete new list of steps (not a patch): it replaces all steps, [] clears them, omitting it leaves them unchanged.
-  Params: `slug`, `name`, `description`, `recipeYield`, `totalTime`, `categories`, `tags`, `taxonomyMode`, `createMissing`, `instructions`
+  Params: `slug`, `name`, `description`, `recipeYield`, `totalTime`, `recipeServings`, `recipeYieldQuantity`, `orgURL`, `categories`, `tags`, `taxonomyMode`, `createMissing`, `instructions`
 
 - `set_recipe_image` — PUT /api/recipes/{slug}/image, DELETE /api/recipes/{slug}/image
   Sets, replaces, or deletes a recipe's image. Pass `imageBase64` as base64-encoded PNG, JPEG, WebP, or GIF data (max 10 MB; a data: URI prefix is accepted) to upload or replace the image, or pass `null` to delete the existing image. Input is validated before anything is sent to Mealie, and no other recipe fields are touched. `extension` is optional; the format is detected from the data, and a mismatching extension is rejected. To set an image from a URL instead, use `set_recipe_image_from_url`.
