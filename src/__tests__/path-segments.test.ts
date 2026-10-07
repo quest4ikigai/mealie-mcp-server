@@ -100,7 +100,7 @@ describe('requests handed to fetch', () => {
     expect(url.startsWith(prefix)).toBe(true);
     const rest = url.slice(prefix.length);
     expect(rest).not.toMatch(/[/\\?#]/);
-    expect(new URL(url).pathname.split('/').length).toBe(5);
+    expect(new URL(url).pathname.split('/')).toHaveLength(5);
     expect(decodeURIComponent(rest)).toBe(p);
     expect((fetchMock.mock.calls[0][1] as RequestInit).method).toBe('DELETE');
   });
