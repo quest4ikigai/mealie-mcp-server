@@ -276,7 +276,7 @@ export async function scanAuditedRecipes<T>(options: AuditScanOptions<T>): Promi
   const failures: AuditFailure[] = [];
   let scannedCount = 0;
   let lastScanned: ScannedRecipe | null = null;
-  let stopReason: ScanStopReason = 'exhausted';
+  let stopReason: ScanStopReason;
 
   outer: for (;;) {
     const batch = await pullBatch(iterator, DETAIL_FETCH_BATCH_SIZE);

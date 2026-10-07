@@ -288,6 +288,22 @@ describe('verification and rollback', () => {
     expect(mockPatch).toHaveBeenCalledTimes(1);
   });
 
+  it('compares reference ids order- and case-insensitively when Mealie persists them reordered', async () => {
+    mockPatch.mockImplementation((_slug, data) => {
+      const steps = (data as { recipeInstructions: Record<string, unknown>[] }).recipeInstructions.map((s, i) => ({
+        ...s,
+        id: `new-${i}`,
+        ingredientReferences: [...(s.ingredientReferences as unknown[])].reverse(),
+      }));
+      return Promise.resolve(makeRecipe(steps, 'later'));
+    });
+    await updateRecipeInstructions('r', {
+      expectedUpdatedAt: TS,
+      updateInstructions: [{ index: 2, ingredientReferenceIds: [ING_B, ING_A.toUpperCase()] }],
+    });
+    expect(mockPatch).toHaveBeenCalledTimes(1);
+  });
+
   it('fails verification on mismatch and rolls back to the original, verified canonically', async () => {
     mockPatch
       .mockResolvedValueOnce(makeRecipe([step('wrong')], 'later'))

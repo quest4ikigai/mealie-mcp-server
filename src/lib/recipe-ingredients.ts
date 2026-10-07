@@ -286,49 +286,63 @@ function definedFields<T extends object>(value: T): Partial<T> {
   return Object.fromEntries(Object.entries(value).filter(([, v]) => v !== undefined)) as Partial<T>;
 }
 
-function buildDeltaIngredients(original: Record<string, unknown>, delta: RecipeIngredientDelta): BuiltIngredients {
-  const rawRows = (Array.isArray(original.recipeIngredient) ? original.recipeIngredient : []) as Record<string, unknown>[];
+interface ReferenceIndex {
+  /** Normalized referenceId → row index on the recipe as currently stored. */
+  existing: Map<string, number>;
+  /** referenceIds that several stored rows share; they cannot be addressed unambiguously. */
+  duplicates: Set<string>;
+}
 
+function indexByReferenceId(rawRows: Record<string, unknown>[]): ReferenceIndex {
   const existing = new Map<string, number>();
-  const duplicateExisting = new Set<string>();
+  const duplicates = new Set<string>();
   rawRows.forEach((row, i) => {
     const key = refKey(row?.referenceId as string | undefined);
     if (!key) return;
-    if (existing.has(key)) duplicateExisting.add(key);
+    if (existing.has(key)) duplicates.add(key);
     existing.set(key, i);
   });
+  return { existing, duplicates };
+}
 
-  const problems: string[] = [];
-  const requireExisting = (id: string | undefined, what: string): string | null => {
-    const key = refKey(id);
-    if (!key) {
-      problems.push(`${what} requires a non-empty referenceId.`);
-      return null;
-    }
-    if (!existing.has(key)) {
-      problems.push(`${what} references unknown referenceId '${id}' (not present on the recipe as currently stored).`);
-      return null;
-    }
-    if (duplicateExisting.has(key)) {
-      problems.push(`${what} references referenceId '${id}', which is ambiguous — several existing rows share it.`);
-      return null;
-    }
-    return key;
-  };
+/** Returns the normalized key of a uniquely addressable stored row, or records why it is not one. */
+function requireExisting(index: ReferenceIndex, id: string | undefined, what: string, problems: string[]): string | null {
+  const key = refKey(id);
+  if (!key) {
+    problems.push(`${what} requires a non-empty referenceId.`);
+    return null;
+  }
+  if (!index.existing.has(key)) {
+    problems.push(`${what} references unknown referenceId '${id}' (not present on the recipe as currently stored).`);
+    return null;
+  }
+  if (index.duplicates.has(key)) {
+    problems.push(`${what} references referenceId '${id}', which is ambiguous — several existing rows share it.`);
+    return null;
+  }
+  return key;
+}
 
-  // Removals
+function collectRemovals(delta: RecipeIngredientDelta, index: ReferenceIndex, problems: string[]): Set<string> {
   const removed = new Set<string>();
   for (const id of delta.removeIngredientReferenceIds ?? []) {
-    const key = requireExisting(id, 'Removal');
+    const key = requireExisting(index, id, 'Removal', problems);
     if (!key) continue;
     if (removed.has(key)) problems.push(`Duplicate removal of referenceId '${id}'.`);
     removed.add(key);
   }
+  return removed;
+}
 
-  // Updates
+function collectUpdates(
+  delta: RecipeIngredientDelta,
+  index: ReferenceIndex,
+  removed: Set<string>,
+  problems: string[],
+): Map<string, Partial<RecipeIngredientInput>> {
   const patches = new Map<string, Partial<RecipeIngredientInput>>();
   for (const update of delta.updateIngredients ?? []) {
-    const key = requireExisting(update.referenceId, 'Update');
+    const key = requireExisting(index, update.referenceId, 'Update', problems);
     if (!key) continue;
     if (patches.has(key)) problems.push(`Duplicate update of referenceId '${update.referenceId}'.`);
     if (removed.has(key)) problems.push(`referenceId '${update.referenceId}' is both updated and removed.`);
@@ -354,8 +368,23 @@ function buildDeltaIngredients(original: Record<string, unknown>, delta: RecipeI
     }
     patches.set(key, fields);
   }
+  return patches;
+}
 
-  // Additions
+interface PlannedAdditions {
+  /** Additions to emit directly before / after the stored row with this key, in input order. */
+  before: Map<string, RecipeIngredientInput[]>;
+  after: Map<string, RecipeIngredientInput[]>;
+  /** Unanchored additions, emitted after everything else. */
+  appended: RecipeIngredientInput[];
+}
+
+function collectAdditions(
+  delta: RecipeIngredientDelta,
+  index: ReferenceIndex,
+  removed: Set<string>,
+  problems: string[],
+): PlannedAdditions {
   const addedKeys = new Set<string>();
   const appended: RecipeIngredientInput[] = [];
   const after = new Map<string, RecipeIngredientInput[]>();
@@ -364,7 +393,7 @@ function buildDeltaIngredients(original: Record<string, unknown>, delta: RecipeI
     const { insertAfterReferenceId, insertBeforeReferenceId, ...ingredient } = add;
     const addKey = refKey(ingredient.referenceId);
     if (addKey) {
-      if (existing.has(addKey)) {
+      if (index.existing.has(addKey)) {
         problems.push(`Addition uses referenceId '${ingredient.referenceId}', which already exists on the recipe.`);
       }
       if (addedKeys.has(addKey)) problems.push(`Duplicate referenceId '${ingredient.referenceId}' among additions.`);
@@ -379,7 +408,7 @@ function buildDeltaIngredients(original: Record<string, unknown>, delta: RecipeI
       appended.push(ingredient);
       continue;
     }
-    const anchorKey = requireExisting(anchorId, 'Addition anchor');
+    const anchorKey = requireExisting(index, anchorId, 'Addition anchor', problems);
     if (!anchorKey) continue;
     if (removed.has(anchorKey)) {
       problems.push(`Addition is anchored to referenceId '${anchorId}', which is being removed.`);
@@ -388,11 +417,15 @@ function buildDeltaIngredients(original: Record<string, unknown>, delta: RecipeI
     const target = insertAfterReferenceId !== undefined ? after : before;
     target.set(anchorKey, [...(target.get(anchorKey) ?? []), ingredient]);
   }
+  return { before, after, appended };
+}
 
-  if (problems.length > 0) {
-    throw new Error(`Invalid ingredient delta, nothing was written: ${problems.join(' ')}`);
-  }
-
+function materializeDelta(
+  rawRows: Record<string, unknown>[],
+  removed: Set<string>,
+  patches: Map<string, Partial<RecipeIngredientInput>>,
+  { before, after, appended }: PlannedAdditions,
+): BuiltIngredients {
   const inputs: RecipeIngredientInput[] = [];
   const payload: unknown[] = [];
   const emitAdded = (list: RecipeIngredientInput[] | undefined) => {
@@ -425,6 +458,25 @@ function buildDeltaIngredients(original: Record<string, unknown>, delta: RecipeI
   emitAdded(appended);
 
   return { inputs, payload };
+}
+
+/**
+ * Validates the whole delta against the stored rows (every problem is collected before anything
+ * is thrown), then materializes the final collection in stored order.
+ */
+function buildDeltaIngredients(original: Record<string, unknown>, delta: RecipeIngredientDelta): BuiltIngredients {
+  const rawRows = (Array.isArray(original.recipeIngredient) ? original.recipeIngredient : []) as Record<string, unknown>[];
+  const index = indexByReferenceId(rawRows);
+
+  const problems: string[] = [];
+  const removed = collectRemovals(delta, index, problems);
+  const patches = collectUpdates(delta, index, removed, problems);
+  const additions = collectAdditions(delta, index, removed, problems);
+  if (problems.length > 0) {
+    throw new Error(`Invalid ingredient delta, nothing was written: ${problems.join(' ')}`);
+  }
+
+  return materializeDelta(rawRows, removed, patches, additions);
 }
 
 function attachRequestCount(error: unknown, requestCount: number): void {

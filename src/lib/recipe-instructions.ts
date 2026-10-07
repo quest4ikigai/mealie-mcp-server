@@ -78,13 +78,22 @@ function refIds(value: unknown): string[] {
     .filter((id) => id.length > 0);
 }
 
+/**
+ * Ordinal (code-unit) comparison for canonical reference-id lists. Ordering only has to be
+ * deterministic so expected and persisted lists compare equal; it must not depend on locale.
+ */
+function compareOrdinal(a: string, b: string): number {
+  if (a < b) return -1;
+  return a > b ? 1 : 0;
+}
+
 function toCanonical(raw: Record<string, unknown>): CanonicalInstruction {
   return {
     text: typeof raw.text === 'string' ? raw.text : '',
     title: typeof raw.title === 'string' ? raw.title : '',
     summary: typeof raw.summary === 'string' ? raw.summary : '',
-    ingredientReferenceIds: refIds(raw.ingredientReferences).sort(),
-    noteReferenceIds: refIds(raw.noteReferences).sort(),
+    ingredientReferenceIds: refIds(raw.ingredientReferences).sort(compareOrdinal),
+    noteReferenceIds: refIds(raw.noteReferences).sort(compareOrdinal),
   };
 }
 
@@ -241,8 +250,8 @@ function newDraft(input: RecipeInstructionInput, known: Set<string>, what: strin
     text: input.text,
     title: input.title ?? '',
     summary: input.summary ?? '',
-    ingredientReferenceIds: [...ingredient].sort(),
-    noteReferenceIds: [...note].sort(),
+    ingredientReferenceIds: [...ingredient].sort(compareOrdinal),
+    noteReferenceIds: [...note].sort(compareOrdinal),
   };
   return { canonical, payload: buildPayload({}, canonical, { ingredient, note }) };
 }
@@ -266,17 +275,23 @@ function buildReplacement(instructions: RecipeInstructionInput[], known: Set<str
   return drafts;
 }
 
-function buildDelta(current: Record<string, unknown>[], delta: RecipeInstructionDelta, known: Set<string>): DraftInstruction[] {
-  const n = current.length;
-  const problems: string[] = [];
-
+function collectRemovals(delta: RecipeInstructionDelta, n: number, problems: string[]): Set<number> {
   const removed = new Set<number>();
   for (const index of delta.removeInstructionIndexes ?? []) {
     if (!checkIndex(index, n, 'Removal', problems)) continue;
     if (removed.has(index)) problems.push(`Removal: duplicate index ${index}.`);
     removed.add(index);
   }
+  return removed;
+}
 
+function collectUpdates(
+  delta: RecipeInstructionDelta,
+  n: number,
+  removed: Set<number>,
+  known: Set<string>,
+  problems: string[],
+): Map<number, RecipeInstructionUpdateInput> {
   const updates = new Map<number, RecipeInstructionUpdateInput>();
   for (const update of delta.updateInstructions ?? []) {
     const what = `Update of index ${String(update.index)}`;
@@ -295,9 +310,24 @@ function buildDelta(current: Record<string, unknown>[], delta: RecipeInstruction
     if (update.ingredientReferenceIds !== undefined) validateIngredientRefs(update.ingredientReferenceIds, known, what, problems);
     updates.set(update.index, update);
   }
+  return updates;
+}
 
-  // Gap g sits directly before original index g (gap n is the end). insertBefore(i) → gap i,
-  // insertAfter(i) → gap i+1. Two directions landing in one gap are ambiguous.
+interface PlannedAdditions {
+  /** Drafts per gap; gap g sits directly before original index g (gap n is the end). */
+  gaps: Map<number, DraftInstruction[]>;
+  /** Unanchored additions, emitted after everything else. */
+  appended: DraftInstruction[];
+}
+
+function collectAdditions(
+  delta: RecipeInstructionDelta,
+  n: number,
+  removed: Set<number>,
+  known: Set<string>,
+  problems: string[],
+): PlannedAdditions {
+  // insertBefore(i) → gap i, insertAfter(i) → gap i+1. Two directions landing in one gap are ambiguous.
   const gaps = new Map<number, { directions: Set<string>; drafts: DraftInstruction[] }>();
   const appended: DraftInstruction[] = [];
   (delta.addInstructions ?? []).forEach((add, i) => {
@@ -333,38 +363,48 @@ function buildDelta(current: Record<string, unknown>[], delta: RecipeInstruction
       );
     }
   }
+  return { gaps: new Map([...gaps].map(([gap, entry]) => [gap, entry.drafts])), appended };
+}
 
+function applyUpdate(raw: Record<string, unknown>, update: RecipeInstructionUpdateInput): DraftInstruction {
+  const base = toCanonical(raw);
+  const canonical: CanonicalInstruction = {
+    ...base,
+    text: update.text ?? base.text,
+    title: update.title === undefined ? base.title : (update.title ?? ''),
+    summary: update.summary === undefined ? base.summary : (update.summary ?? ''),
+    ingredientReferenceIds:
+      update.ingredientReferenceIds === undefined
+        ? base.ingredientReferenceIds
+        : update.ingredientReferenceIds.map((id) => id.toLowerCase()).sort(compareOrdinal),
+  };
+  // Omitted ingredientReferences stay exactly as stored (dangling ones included); noteReferences
+  // always stay exactly as stored.
+  return {
+    canonical,
+    payload: buildPayload(withoutId(raw), canonical, {
+      ingredient: update.ingredientReferenceIds === undefined ? undefined : update.ingredientReferenceIds.map((id) => id.toLowerCase()),
+    }),
+  };
+}
+
+function buildDelta(current: Record<string, unknown>[], delta: RecipeInstructionDelta, known: Set<string>): DraftInstruction[] {
+  const n = current.length;
+  const problems: string[] = [];
+  const removed = collectRemovals(delta, n, problems);
+  const updates = collectUpdates(delta, n, removed, known, problems);
+  const { gaps, appended } = collectAdditions(delta, n, removed, known, problems);
   if (problems.length > 0) throw new Error(`Invalid instruction request, nothing was written: ${problems.join(' ')}`);
 
+  // Every index refers to the original snapshot: walk it once, emitting each gap's additions
+  // before the retained (possibly updated) instruction at that position.
   const result: DraftInstruction[] = [];
   for (let g = 0; g <= n; g++) {
-    result.push(...(gaps.get(g)?.drafts ?? []));
+    result.push(...(gaps.get(g) ?? []));
     if (g === n || removed.has(g)) continue;
     const raw = current[g];
     const update = updates.get(g);
-    if (!update) {
-      result.push({ canonical: toCanonical(raw), payload: withoutId(raw) });
-      continue;
-    }
-    const base = toCanonical(raw);
-    const canonical: CanonicalInstruction = {
-      ...base,
-      text: update.text ?? base.text,
-      title: update.title === undefined ? base.title : (update.title ?? ''),
-      summary: update.summary === undefined ? base.summary : (update.summary ?? ''),
-      ingredientReferenceIds:
-        update.ingredientReferenceIds === undefined
-          ? base.ingredientReferenceIds
-          : update.ingredientReferenceIds.map((id) => id.toLowerCase()).sort(),
-    };
-    // Omitted ingredientReferences stay exactly as stored (dangling ones included); noteReferences
-    // always stay exactly as stored.
-    result.push({
-      canonical,
-      payload: buildPayload(withoutId(raw), canonical, {
-        ingredient: update.ingredientReferenceIds === undefined ? undefined : update.ingredientReferenceIds.map((id) => id.toLowerCase()),
-      }),
-    });
+    result.push(update ? applyUpdate(raw, update) : { canonical: toCanonical(raw), payload: withoutId(raw) });
   }
   result.push(...appended);
   return result;
