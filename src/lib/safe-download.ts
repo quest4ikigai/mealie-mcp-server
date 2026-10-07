@@ -39,12 +39,12 @@ export function isPrivateAddress(ip: string): boolean {
   if (v === 4) return isPrivateIPv4(ip);
   if (v === 6) {
     const lower = ip.toLowerCase();
-    const mapped = lower.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
+    const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(lower);
     if (mapped) return isPrivateIPv4(mapped[1]);
     // Allowlist global unicast (2000::/3) minus special-use ranges; everything else is non-public.
     const groups = lower.split(':');
-    const first = parseInt(groups[0] || '0', 16);
-    const second = parseInt(groups[1] || '0', 16);
+    const first = Number.parseInt(groups[0] || '0', 16);
+    const second = Number.parseInt(groups[1] || '0', 16);
     if (first < 0x2000 || first > 0x3fff) return true;
     if (first === 0x2001 && (second < 0x200 || second === 0xdb8)) return true; // 2001::/23, 2001:db8::/32
     if (first === 0x2002) return true; // 6to4 (embeds IPv4)
@@ -162,15 +162,18 @@ async function readBodyBounded(res: Response, maxBytes: number): Promise<Uint8Ar
   const chunks: Uint8Array[] = [];
   let total = 0;
   const reader = res.body.getReader();
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    total += value.length;
-    if (total > maxBytes) {
-      await reader.cancel().catch(() => undefined);
-      throw tooLarge();
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.length;
+      if (total > maxBytes) throw tooLarge();
+      chunks.push(value);
     }
-    chunks.push(value);
+  } catch (error) {
+    // Stop the source as soon as reading is abandoned (size limit, stream error or timeout).
+    await reader.cancel().catch(() => undefined);
+    throw error;
   }
   const bytes = new Uint8Array(total);
   let offset = 0;
@@ -181,6 +184,27 @@ async function readBodyBounded(res: Response, maxBytes: number): Promise<Uint8Ar
   return bytes;
 }
 
+// Follows redirects up to the limit, re-validating and re-pinning every hop, and returns the first
+// non-redirect response.
+async function fetchFollowingRedirects(
+  rawUrl: string,
+  resolve: HostResolver,
+  transport: PinnedTransport,
+  signal: AbortSignal,
+): Promise<Response> {
+  let current = rawUrl;
+  for (let hop = 0; hop <= DOWNLOAD_MAX_REDIRECTS; hop++) {
+    const { url, addresses } = await assertSafeUrl(current, resolve, signal);
+    const res = await transport(url, addresses, signal);
+    if (res.status < 300 || res.status >= 400) return res;
+    const location = res.headers.get('location');
+    await res.body?.cancel().catch(() => undefined);
+    if (!location) throw new Error(`Download failed: redirect ${res.status} without a Location header.`);
+    current = new URL(location, url).toString();
+  }
+  throw new Error(`Download failed: too many redirects (max ${DOWNLOAD_MAX_REDIRECTS}).`);
+}
+
 export async function downloadBounded(
   rawUrl: string,
   maxBytes: number,
@@ -189,28 +213,16 @@ export async function downloadBounded(
   const resolve = options.resolve ?? defaultResolver;
   const transport = options.transport ?? pinnedTransport;
   const signal = AbortSignal.timeout(options.timeoutMs ?? DOWNLOAD_TIMEOUT_MS);
-  let current = rawUrl;
   try {
-    for (let hop = 0; hop <= DOWNLOAD_MAX_REDIRECTS; hop++) {
-      const { url, addresses } = await assertSafeUrl(current, resolve, signal);
-      const res = await transport(url, addresses, signal);
-      if (res.status >= 300 && res.status < 400) {
-        const location = res.headers.get('location');
-        await res.body?.cancel().catch(() => undefined);
-        if (!location) throw new Error(`Download failed: redirect ${res.status} without a Location header.`);
-        current = new URL(location, url).toString();
-        continue;
-      }
-      if (!res.ok) {
-        await res.body?.cancel().catch(() => undefined);
-        throw new Error(`Download failed: source responded with HTTP ${res.status}.`);
-      }
-      return await readBodyBounded(res, maxBytes);
+    const res = await fetchFollowingRedirects(rawUrl, resolve, transport, signal);
+    if (!res.ok) {
+      await res.body?.cancel().catch(() => undefined);
+      throw new Error(`Download failed: source responded with HTTP ${res.status}.`);
     }
+    return await readBodyBounded(res, maxBytes);
   } catch (error) {
     if (signal.aborted) throw new Error('Download timed out.');
     if (error instanceof Error && /^(Download|Downloaded|download_url)/.test(error.message)) throw error;
     throw new Error(`Download failed: ${error instanceof Error ? error.message : String(error)}`);
   }
-  throw new Error(`Download failed: too many redirects (max ${DOWNLOAD_MAX_REDIRECTS}).`);
 }
