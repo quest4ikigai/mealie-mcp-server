@@ -1,3 +1,10 @@
+# [1.22.0](https://github.com/timo-reymann/mealie-mcp-server/compare/v1.21.0...v1.22.0) (2026-10-07)
+
+
+### Features
+
+* accept servings, yield quantity and orgURL in patch_recipe ([f4a4706](https://github.com/timo-reymann/mealie-mcp-server/commit/f4a47064ccae803b337a4e7d6045e19a5405d50a))
+
 # [1.21.0](https://github.com/timo-reymann/mealie-mcp-server/compare/v1.20.0...v1.21.0) (2026-10-07)
 
 
