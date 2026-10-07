@@ -14,7 +14,13 @@ vi.mock('../api/recipes.js', () => ({
 
 import * as recipesApi from '../api/recipes.js';
 import { setRecipeImageFromFile, setRecipeImage, RECIPE_IMAGE_MAX_BYTES } from '../lib/recipe-image.js';
-import { isPrivateAddress, pinnedTransport, createPinnedTransport, downloadBounded } from '../lib/safe-download.js';
+import {
+  isPrivateAddress,
+  pinnedTransport,
+  createPinnedTransport,
+  downloadBounded,
+  DOWNLOAD_MAX_REDIRECTS,
+} from '../lib/safe-download.js';
 import { registerRecipeTools } from '../tools/recipes.js';
 
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
@@ -125,6 +131,8 @@ describe('setRecipeImageFromFile', () => {
       Promise.resolve(new Response(null, { status: 302, headers: { location: '/loop' } })),
     );
     await expect(setRecipeImageFromFile('s', file(), { transport, resolve })).rejects.toThrow(/too many redirects/);
+    // The original request plus DOWNLOAD_MAX_REDIRECTS followed redirects, and no more.
+    expect(fetchMock).toHaveBeenCalledTimes(DOWNLOAD_MAX_REDIRECTS + 1);
   });
 
   it('refuses private targets, including via redirect, and bad schemes', async () => {
