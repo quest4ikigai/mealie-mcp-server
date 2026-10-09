@@ -1,3 +1,20 @@
+# [2.0.0](https://github.com/timo-reymann/mealie-mcp-server/compare/v1.22.0...v2.0.0) (2026-10-09)
+
+
+### Bug Fixes
+
+* harden dynamic API path segments ([007999c](https://github.com/timo-reymann/mealie-mcp-server/commit/007999c8976e8e349914edbd145971bb87e20436))
+
+
+### Features
+
+* add host file-reference recipe image upload ([194df23](https://github.com/timo-reymann/mealie-mcp-server/commit/194df232b52e017fe2ca1989e9af57a548b6e148))
+
+
+### BREAKING CHANGES
+
+* UUID-backed tool inputs now require a valid RFC 9562 UUID (z.string().uuid()), and every dynamic API path segment is validated and percent-encoded exactly once by encodePathSegment(). Values containing "/" or "\", blank values, and "." / ".." are rejected before any request is sent; pre-percent-encoded values are encoded again; "?" and "#" are no longer treated as path terminators. Malformed IDs and slugs that previously reached Mealie now fail input validation instead.
+
 # [1.22.0](https://github.com/timo-reymann/mealie-mcp-server/compare/v1.21.0...v1.22.0) (2026-10-07)
 
 
